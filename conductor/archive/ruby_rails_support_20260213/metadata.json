@@ -1,8 +1,0 @@
-{
-  "track_id": "ruby_rails_support_20260213",
-  "type": "feature",
-  "status": "new",
-  "created_at": "2026-02-13T11:55:00Z",
-  "updated_at": "2026-02-13T11:55:00Z",
-  "description": "Add Ruby and Ruby on Rails support, this would be similar to how Python and Django support functions"
-}

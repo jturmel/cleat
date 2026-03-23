@@ -1,8 +1,0 @@
-{
-  "track_id": "workflow_refactoring_20260205",
-  "type": "chore",
-  "status": "new",
-  "created_at": "2026-02-05T00:00:00Z",
-  "updated_at": "2026-02-05T00:00:00Z",
-  "description": "Workflow Refactoring: Deduplicate persistence logic, reuse Project ID hash, and clarify Strategy interface."
-}

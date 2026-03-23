@@ -1,8 +1,0 @@
-{
-  "track_id": "refactor_strategy_dispatcher_20260205",
-  "type": "refactor",
-  "status": "new",
-  "created_at": "2026-02-05T12:00:00Z",
-  "updated_at": "2026-02-05T12:00:00Z",
-  "description": "Refactor the GetStrategyForCommand Function using a dispatcher pattern"
-}

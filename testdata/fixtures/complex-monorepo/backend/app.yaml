@@ -1,3 +1,0 @@
-runtime: python39
-service: backend
-entrypoint: gunicorn -b :$PORT myproject.wsgi:application

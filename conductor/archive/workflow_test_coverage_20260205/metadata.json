@@ -1,8 +1,0 @@
-{
-  "track_id": "workflow_test_coverage_20260205",
-  "type": "chore",
-  "status": "new",
-  "created_at": "2026-02-05T00:00:00Z",
-  "updated_at": "2026-02-05T00:00:00Z",
-  "description": "Test coverage is thin for the special workflow command. The single test (TestRunWorkflowCmd_ExternalFile) only verifies that MockExecutor.Run was called. It doesn't assert: Which command was actually run, That multi-step workflows execute in order, That input prompting works correctly, That unknown workflow names produce proper errors, That recursive/circular workflows are handled, That the workflow file merge precedence (cleat.yaml -> project file -> user file) works correctly."
-}

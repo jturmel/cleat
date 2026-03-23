@@ -1,6 +1,0 @@
-runtime: python39
-service: backend
-entrypoint: gunicorn -b :$PORT main:app
-
-env_variables:
-  ENV: "production"

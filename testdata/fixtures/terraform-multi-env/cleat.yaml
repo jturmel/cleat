@@ -1,7 +1,0 @@
-version: 1
-terraform:
-  use_folders: true
-envs:
-  - production
-  - staging
-  - dev

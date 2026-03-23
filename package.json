@@ -1,0 +1,8 @@
+{
+  "name": "cleat",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/plugin": "1.2.27"
+  }
+}

@@ -1,8 +1,0 @@
-{
-  "track_id": "fix_workflow_command_20260205",
-  "type": "bug",
-  "status": "new",
-  "created_at": "2026-02-05T23:35:00Z",
-  "updated_at": "2026-02-05T23:35:00Z",
-  "description": "Fix issue where a created workflow won't run, it says it doesn't know about it"
-}

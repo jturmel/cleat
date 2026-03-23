@@ -1,8 +1,0 @@
-{
-  "track_id": "repository_cleanup_20260213",
-  "type": "chore",
-  "status": "new",
-  "created_at": "2026-02-13T07:15:00Z",
-  "updated_at": "2026-02-13T07:15:00Z",
-  "description": "Remove the examples directory, and other cleanup like the coverage files in the root"
-}

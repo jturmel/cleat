@@ -1,8 +1,0 @@
-{
-  "track_id": "automated_releases_20260212",
-  "type": "feature",
-  "status": "new",
-  "created_at": "2026-02-12T10:00:00Z",
-  "updated_at": "2026-02-12T10:00:00Z",
-  "description": "Implement automated GitHub releases on tag push and a curl installation script in README."
-}

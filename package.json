@@ -1,7 +1,11 @@
 {
   "name": "cleat",
   "private": true,
+  "main": "./.opencode/plugins/cleat-plugin.js",
   "type": "module",
+  "scripts": {
+    "test": "node .opencode/plugins/cleat-plugin.test.js"
+  },
   "dependencies": {
     "@opencode-ai/plugin": "1.2.27"
   }

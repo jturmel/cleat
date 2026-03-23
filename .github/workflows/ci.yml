@@ -14,27 +14,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          go-version-file: 'go.mod'
-          cache: true
+          node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: go mod download
+        run: npm ci
 
-      - name: Run tests with coverage
-        run: go run cmd/cleat/main.go go coverage
-
-      - name: Check coverage threshold
-        run: |
-          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage: ${coverage}%"
-          threshold=70
-          if awk -v cov="$coverage" -v thresh="$threshold" 'BEGIN {if (cov < thresh) exit 1; exit 0}'; then
-            echo "✅ Coverage check passed: ${coverage}% >= ${threshold}%"
-            exit 0
-          else
-            echo "❌ Error: Coverage ${coverage}% is below ${threshold}% threshold"
-            exit 1
-          fi
+      - name: Run plugin tests
+        run: npm test

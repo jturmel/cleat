@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import { __cleatInternals } from "./cleat-plugin.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const fixtures = join(__dirname, "..", "fixtures")
+const fixtures = join(__dirname, "..", "..", "fixtures")
 
 function readFixture(name) {
   return readFileSync(join(fixtures, name), "utf8")

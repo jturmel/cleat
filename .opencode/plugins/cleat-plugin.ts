@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin"
-import { loadTaskfile, parseTaskfileYaml, type ParsedTaskfile, type TaskDefinition } from "./taskfile.js"
+import { loadTaskfile, parseTaskfileYaml, type ParsedTaskfile, type TaskDefinition } from "../../tasks.js"
 import { execSync, spawn } from "child_process"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
@@ -97,6 +97,7 @@ type Category = {
 type IntentMatch = {
   task: string
   desc: string
+  summary: string
   score: number
 }
 
@@ -113,6 +114,14 @@ type GoTaskResult = {
   cmd: string
   error?: unknown
   exitCode?: number | null
+}
+
+function getTaskSearchText(task: Pick<TaskDefinition, "desc" | "summary">) {
+  return [task.desc, task.summary].filter(Boolean).join(" ")
+}
+
+function getTaskDisplayText(task: Pick<TaskDefinition, "desc" | "summary">) {
+  return task.desc || task.summary || "(no description)"
 }
 
 function getRoutingState(sessionID) {
@@ -752,8 +761,9 @@ function buildIntentMappings(tasks: Record<string, TaskDefinition>) {
     if (task.internal) continue
     
     const nameLower = name.toLowerCase()
-    const descLower = (task.desc || "").toLowerCase()
-    const combined = `${nameLower} ${descLower}`
+    const searchText = getTaskSearchText(task)
+    const searchTextLower = searchText.toLowerCase()
+    const combined = `${nameLower} ${searchTextLower}`
     
     for (const pattern of intentPatterns) {
       for (const keyword of pattern.keywords) {
@@ -765,13 +775,13 @@ function buildIntentMappings(tasks: Record<string, TaskDefinition>) {
           // Score based on how well it matches
           let score = 0
           if (nameLower.includes(keyword)) score += 2
-          if (descLower.includes(keyword)) score += 1
+          if (searchTextLower.includes(keyword)) score += 1
           // Prefer root tasks
           if (!name.includes(":")) score += 3
           // Prefer shorter names
           score += Math.max(0, 10 - name.length) / 10
           
-          intents[pattern.intent].push({ task: name, desc: task.desc, score })
+          intents[pattern.intent].push({ task: name, desc: task.desc, summary: task.summary, score })
           break
         }
       }
@@ -1078,7 +1088,8 @@ function getTaskListFromCli(worktree, all = false) {
     if (match) {
       tasks.push({
         name: match[1],
-        desc: match[2].trim()
+        desc: match[2].trim(),
+        summary: "",
       })
     }
   }
@@ -1116,6 +1127,7 @@ function getProjectData(worktree): ProjectData {
       parsed.tasks[t.name] = {
         name: t.name,
         desc: t.desc,
+        summary: t.summary,
         internal: t.name.startsWith("_"),
         deps: [],
         hasNonTaskCommands: false,
@@ -1184,10 +1196,10 @@ export const CleatPlugin = async (ctx) => {
             
             for (const task of cat.tasks) {
               if (task.internal && !args.includeInternal) continue
-              const safety = detectSafety(task.name, task.desc)
+              const safety = detectSafety(task.name, getTaskSearchText(task))
               const safetyBadge = safety.level === "destructive" ? " [DESTRUCTIVE]" : 
                                   safety.level === "production" ? " [PRODUCTION]" : ""
-              output += `- \`${task.name}\`${safetyBadge}: ${task.desc || "(no description)"}\n`
+              output += `- \`${task.name}\`${safetyBadge}: ${getTaskDisplayText(task)}\n`
             }
             
             return output
@@ -1205,7 +1217,7 @@ export const CleatPlugin = async (ctx) => {
             // Show first 5 tasks as preview
             const preview = publicTasks.slice(0, 5)
             for (const task of preview) {
-              output += `- \`${task.name}\`: ${task.desc || "(no description)"}\n`
+              output += `- \`${task.name}\`: ${getTaskDisplayText(task)}\n`
             }
             if (publicTasks.length > 5) {
               output += `- ... and ${publicTasks.length - 5} more\n`
@@ -1252,10 +1264,13 @@ export const CleatPlugin = async (ctx) => {
             return msg
           }
           
-          const safety = detectSafety(task.name, task.desc)
+          const safety = detectSafety(task.name, getTaskSearchText(task))
           
           let output = `## ${task.name}\n\n`
-          output += `**Description:** ${task.desc || "(no description)"}\n\n`
+          output += `**Description:** ${getTaskDisplayText(task)}\n\n`
+          if (task.summary && task.summary !== task.desc) {
+            output += `**Summary:**\n${task.summary}\n\n`
+          }
           
           // Category
           if (task.namespace) {
@@ -1307,7 +1322,7 @@ export const CleatPlugin = async (ctx) => {
             if (related && related.length > 0) {
               output += "**Related Tasks:**\n"
               for (const r of related) {
-                output += `- \`${r.name}\`: ${r.desc || "(no description)"}\n`
+                output += `- \`${r.name}\`: ${getTaskDisplayText(r)}\n`
               }
             }
           }
@@ -1350,7 +1365,7 @@ export const CleatPlugin = async (ctx) => {
           for (const [name, task] of Object.entries(data.tasks)) {
             if (task.internal) continue
             
-            const combined = `${name} ${task.desc || ""}`.toLowerCase()
+            const combined = `${name} ${getTaskSearchText(task)}`.toLowerCase()
             let keywordScore = 0
             
             for (const kw of keywords) {
@@ -1363,6 +1378,7 @@ export const CleatPlugin = async (ctx) => {
               matches.push({
                 task: name,
                 desc: task.desc,
+                summary: task.summary,
                 score: keywordScore,
                 intent: "keyword match"
               })
@@ -1373,7 +1389,7 @@ export const CleatPlugin = async (ctx) => {
           if (ctxLower) {
             for (const match of matches) {
               const taskLower = match.task.toLowerCase()
-              const descLower = (match.desc || "").toLowerCase()
+              const descLower = `${match.desc || ""} ${match.summary || ""}`.toLowerCase()
               
               // Boost/penalize based on context
               if (ctxLower.includes("clean") || ctxLower.includes("fresh")) {
@@ -1414,10 +1430,13 @@ export const CleatPlugin = async (ctx) => {
           
           // Return top recommendation with alternatives
           const top = matches[0]
-          const safety = detectSafety(top.task, top.desc)
+          const safety = detectSafety(top.task, `${top.desc || ""} ${top.summary || ""}`)
           
           let output = `## Recommended: \`task ${top.task}\`\n\n`
-          output += `**Description:** ${top.desc || "(no description)"}\n\n`
+          output += `**Description:** ${top.desc || top.summary || "(no description)"}\n\n`
+          if (top.summary && top.summary !== top.desc) {
+            output += `**Summary:**\n${top.summary}\n\n`
+          }
           
           if (safety.level !== "normal" && safety.level !== "safe") {
             output += `**Safety:** ${safety.level.toUpperCase()}`
@@ -1434,7 +1453,7 @@ export const CleatPlugin = async (ctx) => {
           if (alts.length > 0) {
             output += "**Alternatives:**\n"
             for (const alt of alts) {
-              output += `- \`${alt.task}\`: ${alt.desc || "(no description)"}\n`
+              output += `- \`${alt.task}\`: ${alt.desc || alt.summary || "(no description)"}\n`
             }
           }
           
@@ -1475,8 +1494,11 @@ export const CleatPlugin = async (ctx) => {
             output += `**Command:** \`${fullCommand}\`\n\n`
             
             if (task) {
-              output += `**Description:** ${task.desc || "(no description)"}\n`
-              const safety = detectSafety(task.name, task.desc)
+              output += `**Description:** ${getTaskDisplayText(task)}\n`
+              if (task.summary && task.summary !== task.desc) {
+                output += `**Summary:**\n${task.summary}\n`
+              }
+              const safety = detectSafety(task.name, getTaskSearchText(task))
               if (safety.level !== "normal" && safety.level !== "safe") {
                 output += `**Safety:** ${safety.level.toUpperCase()}`
                 if (safety.warning) output += ` - ${safety.warning}`
@@ -1502,7 +1524,8 @@ export const CleatPlugin = async (ctx) => {
                 const stepTask = steps[index]
                 const stepLabel = `[${index + 1}/${steps.length}] ${stepTask}`
                 const stepResult = await runGoTaskDetailedAsync([stepTask], worktree, 300000)
-                const stepDesc = data.tasks[stepTask]?.desc
+                const stepTaskData = data.tasks[stepTask]
+                const stepDesc = stepTaskData ? getTaskDisplayText(stepTaskData) : ""
                 const heading = stepDesc
                   ? `### ${stepLabel} - ${stepDesc}`
                   : `### ${stepLabel}`

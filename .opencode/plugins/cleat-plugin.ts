@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin"
+import { loadTaskfile, parseTaskfileYaml, type ParsedTaskfile, type TaskDefinition } from "./taskfile.js"
 import { execSync, spawn } from "child_process"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
@@ -86,6 +87,33 @@ const CLEAT_POLICY = {
 const cleatArtifactsBySession = new Map()
 
 const routingStateBySession = new Map()
+
+type Category = {
+  name: string
+  tasks: TaskDefinition[]
+  description: string
+}
+
+type IntentMatch = {
+  task: string
+  desc: string
+  score: number
+}
+
+type ProjectData = {
+  tasks: Record<string, TaskDefinition>
+  includes: ParsedTaskfile["includes"]
+  categories: Record<string, Category>
+  intents: Record<string, IntentMatch[]>
+}
+
+type GoTaskResult = {
+  ok: boolean
+  output: string
+  cmd: string
+  error?: unknown
+  exitCode?: number | null
+}
 
 function getRoutingState(sessionID) {
   if (!routingStateBySession.has(sessionID)) {
@@ -635,175 +663,12 @@ Follow its instructions as part of your workflow.
 }
 
 // ============================================================================
-// YAML PARSING (lightweight, handles go-task Taskfile structure)
-// ============================================================================
-
-function parseTaskfileYaml(content) {
-  const result = {
-    version: null,
-    includes: {},
-    tasks: {}
-  }
-  
-  const lines = content.split("\n")
-  let currentSection = null
-  let currentKey = null
-  let currentTask = null
-  let baseIndent = 0
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-    
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith("#")) continue
-    
-    // Calculate indent (number of leading spaces)
-    const indent = line.search(/\S/)
-    
-    // Top-level keys (no indent)
-    if (indent === 0) {
-      const colonIdx = trimmed.indexOf(":")
-      if (colonIdx > 0) {
-        const key = trimmed.substring(0, colonIdx)
-        const value = trimmed.substring(colonIdx + 1).trim()
-        
-        if (key === "version") {
-          result.version = value.replace(/['"]/g, "")
-          currentSection = null
-        } else if (key === "includes") {
-          currentSection = "includes"
-          currentKey = null
-        } else if (key === "tasks") {
-          currentSection = "tasks"
-          currentTask = null
-        } else {
-          currentSection = null
-        }
-      }
-      continue
-    }
-    
-    // Parse includes section
-    if (currentSection === "includes") {
-      // Namespace definition line (e.g., "  backend:")
-      if (indent === 2 && trimmed.endsWith(":") && !trimmed.includes(" ")) {
-        currentKey = trimmed.slice(0, -1)
-        result.includes[currentKey] = null
-        continue
-      }
-      
-      // Simple include (e.g., "  backend: ./taskfiles/backend.yml")
-      if (indent === 2 && trimmed.includes(":") && !trimmed.endsWith(":")) {
-        const match = trimmed.match(/^(\w+):\s*(.+)$/)
-        if (match) {
-          // This is a simple key: value on one line
-          // Skip if it looks like a nested property (taskfile:, vars:, etc.)
-          if (!["taskfile", "vars", "dir"].includes(match[1])) {
-            result.includes[match[1]] = match[2].trim()
-            currentKey = null
-          }
-        }
-        continue
-      }
-      
-      // Nested taskfile property (e.g., "    taskfile: ./taskfiles/backend.yml")
-      if (indent === 4 && currentKey && trimmed.startsWith("taskfile:")) {
-        const value = trimmed.replace("taskfile:", "").trim()
-        result.includes[currentKey] = value
-        continue
-      }
-    }
-    
-    // Parse tasks section
-    if (currentSection === "tasks") {
-      // Task name line (e.g., "  dev:" or "  'django:*':")
-      if (indent === 2) {
-        const match = trimmed.match(/^['"]?([^'"]+)['"]?:\s*$/)
-        if (match) {
-          currentTask = match[1]
-          result.tasks[currentTask] = {
-            name: currentTask,
-            desc: "",
-            internal: currentTask.startsWith("_"),
-            deps: [],
-            hasNonTaskCommands: false
-          }
-          baseIndent = indent
-          continue
-        }
-      }
-      
-      // Task properties (indent > 2)
-      if (currentTask && indent > baseIndent) {
-        if (trimmed.startsWith("desc:")) {
-          result.tasks[currentTask].desc = trimmed.replace("desc:", "").trim().replace(/^['"]|['"]$/g, "")
-        }
-        if (trimmed.startsWith("internal:")) {
-          result.tasks[currentTask].internal = trimmed.includes("true")
-        }
-        // Parse task dependencies (calls to other tasks)
-        if (trimmed.startsWith("- task:")) {
-          const dep = trimmed.replace("- task:", "").trim()
-          result.tasks[currentTask].deps.push(dep)
-        } else if (trimmed.startsWith("- ")) {
-          result.tasks[currentTask].hasNonTaskCommands = true
-        }
-      }
-    }
-  }
-  
-  return result
-}
-
-// ============================================================================
-// TASKFILE LOADING
-// ============================================================================
-
-function loadTaskfile(worktree) {
-  const taskfilePath = join(worktree, "Taskfile.yml")
-  if (!existsSync(taskfilePath)) {
-    return null
-  }
-  
-  const content = readFileSync(taskfilePath, "utf8")
-  const parsed = parseTaskfileYaml(content)
-  
-  // Load included taskfiles
-  for (const [namespace, relativePath] of Object.entries(parsed.includes)) {
-    if (!relativePath) continue
-    
-    const includePath = join(worktree, relativePath)
-    if (existsSync(includePath)) {
-      try {
-        const includeContent = readFileSync(includePath, "utf8")
-        const includeParsed = parseTaskfileYaml(includeContent)
-        
-        // Prefix task names with namespace
-        for (const [taskName, taskData] of Object.entries(includeParsed.tasks)) {
-          const fullName = `${namespace}:${taskName}`
-          parsed.tasks[fullName] = {
-            ...taskData,
-            name: fullName,
-            namespace: namespace
-          }
-        }
-      } catch (e) {
-        // Skip unreadable includes
-      }
-    }
-  }
-  
-  return parsed
-}
-
-// ============================================================================
 // DYNAMIC CATEGORIZATION
 // ============================================================================
 
-function buildCategories(tasks) {
-  const categories = {}
-  const rootTasks = []
+function buildCategories(tasks: Record<string, TaskDefinition>) {
+  const categories: Record<string, Category> = {}
+  const rootTasks: TaskDefinition[] = []
   
   for (const [name, task] of Object.entries(tasks)) {
     if (task.internal) continue
@@ -864,8 +729,8 @@ function buildCategories(tasks) {
 // DYNAMIC INTENT MAPPING
 // ============================================================================
 
-function buildIntentMappings(tasks) {
-  const intents = {}
+function buildIntentMappings(tasks: Record<string, TaskDefinition>) {
+  const intents: Record<string, IntentMatch[]> = {}
   
   // Keywords to intent patterns
   const intentPatterns = [
@@ -1010,10 +875,15 @@ function runGoTaskDetailed(args, worktree, timeout = 30000) {
   }
 }
 
-function runGoTaskDetailedAsync(args, worktree, timeout = 300000, hooks = {}) {
+function runGoTaskDetailedAsync(
+  args,
+  worktree,
+  timeout = 300000,
+  hooks: { onHeartbeat?: (elapsedSeconds: number) => void } = {},
+): Promise<GoTaskResult> {
   const { onHeartbeat } = hooks
 
-  return new Promise((resolve) => {
+  return new Promise<GoTaskResult>((resolve) => {
     const child = spawn("go-task", args, {
       cwd: worktree,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1107,11 +977,11 @@ function runGoTaskDetailedAsync(args, worktree, timeout = 300000, hooks = {}) {
   })
 }
 
-function buildTaskExecutionSteps(taskName, data) {
+function buildTaskExecutionSteps(taskName, data: ProjectData) {
   const task = data.tasks[taskName]
   if (!task) return null
 
-  const ordered = []
+  const ordered: string[] = []
   const activePath = new Set()
 
   function visit(name) {
@@ -1146,7 +1016,7 @@ function buildTaskExecutionSteps(taskName, data) {
   visit(taskName)
 
   const seen = new Set()
-  const deduped = []
+  const deduped: string[] = []
   for (const name of ordered) {
     if (seen.has(name)) continue
     seen.add(name)
@@ -1220,9 +1090,9 @@ function getTaskListFromCli(worktree, all = false) {
 // CACHE
 // ============================================================================
 
-const cache = new Map()
+const cache = new Map<string, { data: ProjectData; timestamp: number }>()
 
-function getProjectData(worktree) {
+function getProjectData(worktree): ProjectData {
   const cacheKey = worktree
   const cached = cache.get(cacheKey)
   
@@ -1238,15 +1108,18 @@ function getProjectData(worktree) {
   if (!parsed || Object.keys(parsed.tasks).length === 0) {
     const cliTasks = getTaskListFromCli(worktree, true)
     parsed = {
+      version: null,
       tasks: {},
-      includes: {}
+      includes: {},
     }
     for (const t of cliTasks) {
       parsed.tasks[t.name] = {
         name: t.name,
         desc: t.desc,
         internal: t.name.startsWith("_"),
-        namespace: t.name.includes(":") ? t.name.split(":")[0] : null
+        deps: [],
+        hasNonTaskCommands: false,
+        namespace: t.name.includes(":") ? t.name.split(":")[0] : undefined,
       }
     }
   }
@@ -1464,11 +1337,11 @@ export const CleatPlugin = async (ctx) => {
           const ctxLower = (args.context || "").toLowerCase()
           
           // Find matching intents
-          let matches = []
+          let matches: Array<IntentMatch & { intent: string }> = []
           
           for (const [intent, tasks] of Object.entries(data.intents)) {
             if (intentLower.includes(intent) || intent.includes(intentLower)) {
-              matches.push(...tasks.map(t => ({ ...t, intent })))
+              matches.push(...tasks.map((t) => ({ ...t, intent })))
             }
           }
           
@@ -1623,23 +1496,12 @@ export const CleatPlugin = async (ctx) => {
             const steps = buildTaskExecutionSteps(args.task, data)
 
             if (steps && steps.length > 1) {
-              const outputs = []
-              await emitProgressLog(ctx, context, `starting task-level run for ${args.task} (${steps.length} steps)`)
-              await emitProgressMessage(ctx, context, `Starting ${args.task} (${steps.length} steps)`)
+              const outputs: string[] = []
 
               for (let index = 0; index < steps.length; index++) {
                 const stepTask = steps[index]
                 const stepLabel = `[${index + 1}/${steps.length}] ${stepTask}`
-                context.metadata({ title: `${args.task} ${stepLabel}` })
-                await emitProgressLog(ctx, context, `start ${stepLabel}`)
-                await emitProgressMessage(ctx, context, `Starting ${stepLabel}`)
-
-                const stepResult = await runGoTaskDetailedAsync([stepTask], worktree, 300000, {
-                  onHeartbeat: (elapsedSeconds) => {
-                    void emitProgressLog(ctx, context, `running ${stepLabel} (${elapsedSeconds}s)`)
-                    void emitProgressMessage(ctx, context, `Running ${stepLabel} (${elapsedSeconds}s elapsed)`)
-                  },
-                })
+                const stepResult = await runGoTaskDetailedAsync([stepTask], worktree, 300000)
                 const stepDesc = data.tasks[stepTask]?.desc
                 const heading = stepDesc
                   ? `### ${stepLabel} - ${stepDesc}`
@@ -1648,17 +1510,9 @@ export const CleatPlugin = async (ctx) => {
                 outputs.push(`${heading}\n\n${stepResult.output || "(no output)"}`)
 
                 if (!stepResult.ok) {
-                  await emitProgressLog(ctx, context, `failed ${stepLabel}`)
-                  await emitProgressMessage(ctx, context, `Failed ${stepLabel}`)
                   return `## Executed as task-level run: \`task ${args.task}\`\n\nFailed at step ${index + 1} of ${steps.length}: \`${stepTask}\`\n\n${outputs.join("\n\n")}`
                 }
-
-                await emitProgressLog(ctx, context, `completed ${stepLabel}`)
-                await emitProgressMessage(ctx, context, `Completed ${stepLabel}`)
               }
-
-              await emitProgressLog(ctx, context, `completed task-level run for ${args.task}`)
-              await emitProgressMessage(ctx, context, `Completed ${args.task}`)
 
               return `## Executed as task-level run: \`task ${args.task}\`\n\n${outputs.join("\n\n")}`
             }
@@ -1870,4 +1724,6 @@ export const __cleatInternals = {
   buildPolicyScore,
   buildNamespaceSuggestion,
   buildCleatArtifactsForCommand,
+  parseTaskfileYaml,
+  loadTaskfile,
 }

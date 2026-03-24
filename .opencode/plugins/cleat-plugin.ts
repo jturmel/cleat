@@ -121,7 +121,10 @@ function getTaskSearchText(task: Pick<TaskDefinition, "desc" | "summary">) {
 }
 
 function getTaskDisplayText(task: Pick<TaskDefinition, "desc" | "summary">) {
-  return task.desc || task.summary || "(no description)"
+  const raw = task.desc || task.summary
+  if (!raw) return "(no description)"
+  // Normalize to a single line: trim and collapse all whitespace (including newlines)
+  return raw.trim().replace(/\s+/g, " ")
 }
 
 function getRoutingState(sessionID) {

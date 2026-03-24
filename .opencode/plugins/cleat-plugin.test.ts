@@ -144,6 +144,13 @@ tasks:
   }
 }
 
+function testHasSeparateTaskSummary() {
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "", summary: "Only summary" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Same", summary: "Same" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "Longer details" }), true)
+}
+
 
 function run() {
   testParseSlashCommand()
@@ -154,6 +161,7 @@ function run() {
   testPlanArtifactFromMapping()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
+  testHasSeparateTaskSummary()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

@@ -127,6 +127,10 @@ function getTaskDisplayText(task: Pick<TaskDefinition, "desc" | "summary">) {
   return raw.trim().replace(/\s+/g, " ")
 }
 
+function hasSeparateTaskSummary(task: Pick<TaskDefinition, "desc" | "summary">) {
+  return Boolean(task.desc && task.summary && task.summary !== task.desc)
+}
+
 function getRoutingState(sessionID) {
   if (!routingStateBySession.has(sessionID)) {
     routingStateBySession.set(sessionID, {
@@ -1437,7 +1441,7 @@ export const CleatPlugin = async (ctx) => {
           
           let output = `## Recommended: \`task ${top.task}\`\n\n`
           output += `**Description:** ${top.desc || top.summary || "(no description)"}\n\n`
-          if (top.summary && top.summary !== top.desc) {
+          if (hasSeparateTaskSummary(top)) {
             output += `**Summary:**\n${top.summary}\n\n`
           }
           
@@ -1750,6 +1754,7 @@ export const __cleatInternals = {
   buildPolicyScore,
   buildNamespaceSuggestion,
   buildCleatArtifactsForCommand,
+  hasSeparateTaskSummary,
   parseTaskfileYaml,
   loadTaskfile,
 }

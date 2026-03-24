@@ -4,6 +4,7 @@ import { join } from "path"
 export type TaskDefinition = {
   name: string
   desc: string
+  summary: string
   internal: boolean
   deps: string[]
   hasNonTaskCommands: boolean
@@ -28,13 +29,35 @@ export function parseTaskfileYaml(content: string): ParsedTaskfile {
   let currentKey: string | null = null
   let currentTask: string | null = null
   let baseIndent = 0
+  let multilineField: "desc" | "summary" | null = null
+  let multilineIndent = 0
+
+  const finishMultilineField = () => {
+    multilineField = null
+    multilineIndent = 0
+  }
 
   for (const line of lines) {
     const trimmed = line.trim()
+    const indent = line.search(/\S/)
+
+    if (multilineField && currentTask) {
+      if (!trimmed) {
+        result.tasks[currentTask][multilineField] += "\n"
+        continue
+      }
+
+      if (indent > multilineIndent) {
+        const value = line.slice(Math.min(line.length, multilineIndent + 2))
+        result.tasks[currentTask][multilineField] += `${value}\n`
+        continue
+      }
+
+      result.tasks[currentTask][multilineField] = result.tasks[currentTask][multilineField].trimEnd()
+      finishMultilineField()
+    }
 
     if (!trimmed || trimmed.startsWith("#")) continue
-
-    const indent = line.search(/\S/)
 
     if (indent === 0) {
       const colonIdx = trimmed.indexOf(":")
@@ -91,6 +114,7 @@ export function parseTaskfileYaml(content: string): ParsedTaskfile {
           result.tasks[currentTask] = {
             name: currentTask,
             desc: "",
+            summary: "",
             internal: currentTask.startsWith("_"),
             deps: [],
             hasNonTaskCommands: false,
@@ -102,7 +126,24 @@ export function parseTaskfileYaml(content: string): ParsedTaskfile {
 
       if (currentTask && indent > baseIndent) {
         if (trimmed.startsWith("desc:")) {
-          result.tasks[currentTask].desc = trimmed.replace("desc:", "").trim().replace(/^[\'"]|[\'"]$/g, "")
+          const value = trimmed.replace("desc:", "").trim()
+          if (value === "|" || value === ">") {
+            result.tasks[currentTask].desc = ""
+            multilineField = "desc"
+            multilineIndent = indent
+          } else {
+            result.tasks[currentTask].desc = value.replace(/^[\'"]|[\'"]$/g, "")
+          }
+        }
+        if (trimmed.startsWith("summary:")) {
+          const value = trimmed.replace("summary:", "").trim()
+          if (value === "|" || value === ">") {
+            result.tasks[currentTask].summary = ""
+            multilineField = "summary"
+            multilineIndent = indent
+          } else {
+            result.tasks[currentTask].summary = value.replace(/^[\'"]|[\'"]$/g, "")
+          }
         }
         if (trimmed.startsWith("internal:")) {
           result.tasks[currentTask].internal = trimmed.includes("true")
@@ -115,6 +156,10 @@ export function parseTaskfileYaml(content: string): ParsedTaskfile {
         }
       }
     }
+  }
+
+  if (multilineField && currentTask) {
+    result.tasks[currentTask][multilineField] = result.tasks[currentTask][multilineField].trimEnd()
   }
 
   return result

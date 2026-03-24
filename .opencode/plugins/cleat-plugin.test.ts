@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 
 import { __cleatInternals } from "./cleat-plugin.js"
-import { loadTaskfile, parseTaskfileYaml } from "./taskfile.js"
+import { loadTaskfile, parseTaskfileYaml } from "../../tasks.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(__dirname, "..", "..", "fixtures")
@@ -88,6 +88,9 @@ includes:
 tasks:
   verify:
     desc: Run checks
+    summary: |
+      Run the full verification workflow.
+      Includes API coverage.
     deps:
       - task: api:test
   _hidden:
@@ -99,6 +102,7 @@ tasks:
   assert.equal(parsed.version, "3")
   assert.equal(parsed.includes.api, "./taskfiles/api.yml")
   assert.equal(parsed.tasks.verify.desc, "Run checks")
+  assert.equal(parsed.tasks.verify.summary, "Run the full verification workflow.\nIncludes API coverage.")
   assert.deepEqual(parsed.tasks.verify.deps, ["api:test"])
   assert.equal(parsed.tasks._hidden.internal, true)
   assert.equal(parsed.tasks._hidden.hasNonTaskCommands, true)
@@ -116,6 +120,7 @@ includes:
 tasks:
   verify:
     desc: Verify everything
+    summary: Verify the main project workflows
     deps:
       - task: api:test
 `, "utf8")
@@ -123,17 +128,27 @@ tasks:
 tasks:
   test:
     desc: Run API tests
+    summary: Exercise the API task suite
 `, "utf8")
 
     const parsed = loadTaskfile(tempRoot)
     assert.notEqual(parsed, null)
     assert.equal(parsed?.tasks.verify.name, "verify")
+    assert.equal(parsed?.tasks.verify.summary, "Verify the main project workflows")
     assert.equal(parsed?.tasks["api:test"]?.name, "api:test")
     assert.equal(parsed?.tasks["api:test"]?.namespace, "api")
     assert.equal(parsed?.tasks["api:test"]?.desc, "Run API tests")
+    assert.equal(parsed?.tasks["api:test"]?.summary, "Exercise the API task suite")
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
+}
+
+function testHasSeparateTaskSummary() {
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "", summary: "Only summary" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Same", summary: "Same" }), false)
+  assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "Longer details" }), true)
 }
 
 
@@ -146,6 +161,7 @@ function run() {
   testPlanArtifactFromMapping()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
+  testHasSeparateTaskSummary()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

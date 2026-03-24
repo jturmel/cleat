@@ -4,9 +4,15 @@
   "main": "./.opencode/plugins/cleat-plugin.js",
   "type": "module",
   "scripts": {
-    "test": "node .opencode/plugins/cleat-plugin.test.js"
+    "test": "npm run build && node .opencode/plugins/cleat-plugin.test.js",
+    "build": "tsc",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.2.27"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
   }
 }

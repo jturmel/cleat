@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
+import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 
 import { __cleatInternals } from "./cleat-plugin.js"
+import { loadTaskfile, parseTaskfileYaml } from "./taskfile.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(__dirname, "..", "..", "fixtures")
@@ -79,6 +81,62 @@ function testPlanArtifactFromMapping() {
   assert.equal(Array.isArray(plan.candidateDiffHints), true)
 }
 
+function testTaskfileParsingModule() {
+  const parsed = parseTaskfileYaml(`version: "3"
+includes:
+  api: ./taskfiles/api.yml
+tasks:
+  verify:
+    desc: Run checks
+    deps:
+      - task: api:test
+  _hidden:
+    internal: true
+    cmds:
+      - echo nope
+`)
+
+  assert.equal(parsed.version, "3")
+  assert.equal(parsed.includes.api, "./taskfiles/api.yml")
+  assert.equal(parsed.tasks.verify.desc, "Run checks")
+  assert.deepEqual(parsed.tasks.verify.deps, ["api:test"])
+  assert.equal(parsed.tasks._hidden.internal, true)
+  assert.equal(parsed.tasks._hidden.hasNonTaskCommands, true)
+}
+
+function testTaskfileLoadingModule() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-"))
+
+  try {
+    mkdirSync(join(tempRoot, "taskfiles"), { recursive: true })
+    writeFileSync(join(tempRoot, "Taskfile.yml"), `version: "3"
+includes:
+  api:
+    taskfile: ./taskfiles/api.yml
+tasks:
+  verify:
+    desc: Verify everything
+    deps:
+      - task: api:test
+`, "utf8")
+    writeFileSync(join(tempRoot, "taskfiles", "api.yml"), `version: "3"
+tasks:
+  test:
+    desc: Run API tests
+`, "utf8")
+
+    const parsed = loadTaskfile(tempRoot)
+    assert.notEqual(parsed, null)
+    assert.equal(parsed?.tasks.verify.name, "verify")
+    assert.equal(parsed?.tasks["api:test"]?.name, "api:test")
+    assert.equal(parsed?.tasks["api:test"]?.namespace, "api")
+    assert.equal(parsed?.tasks["api:test"]?.desc, "Run API tests")
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+
 function run() {
   testParseSlashCommand()
   testSimpleMakefileClassification()
@@ -86,6 +144,8 @@ function run() {
   testRiskAndDestructiveClassification()
   testShellHeavyTraitAndMapping()
   testPlanArtifactFromMapping()
+  testTaskfileParsingModule()
+  testTaskfileLoadingModule()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

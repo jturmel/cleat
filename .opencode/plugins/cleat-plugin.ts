@@ -1271,7 +1271,7 @@ export const CleatPlugin = async (ctx) => {
           
           let output = `## ${task.name}\n\n`
           output += `**Description:** ${getTaskDisplayText(task)}\n\n`
-          if (task.summary && task.summary !== task.desc) {
+          if (task.summary && task.desc && task.summary !== task.desc) {
             output += `**Summary:**\n${task.summary}\n\n`
           }
           

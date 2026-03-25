@@ -79,6 +79,7 @@ const CLEAT_POLICY = {
 const cleatArtifactsBySession = new Map()
 
 const routingStateBySession = new Map()
+const bootstrapSystemBySession = new Map<string, string | null>()
 
 type Category = {
   name: string
@@ -126,7 +127,6 @@ function hasSeparateTaskSummary(task: Pick<TaskDefinition, "desc" | "summary">) 
 function getRoutingState(sessionID) {
   if (!routingStateBySession.has(sessionID)) {
     routingStateBySession.set(sessionID, {
-      startupInjected: false,
       missScore: 0,
       reinforcementCount: 0,
       lastReinforcedAt: 0,
@@ -557,23 +557,6 @@ async function sendSessionPromptWithRetry(ctx, sessionID, text) {
   }
 }
 
-async function maybeInjectStartupRouting(ctx, sessionID) {
-  if (!ROUTING_ADVISOR_ENABLED) return
-
-  const state = getRoutingState(sessionID)
-  if (state.startupInjected) return
-
-  const text = buildStartupRoutingGuidance()
-  const key = hashPayload(`startup:${sessionID}:${text}`)
-  if (state.sentHashes.has(key)) return
-
-  const sent = await sendSessionPromptWithRetry(ctx, sessionID, text)
-  if (!sent) return
-
-  state.sentHashes.add(key)
-  state.startupInjected = true
-}
-
 async function maybeSendRoutingReinforcement(ctx, sessionID, reason, tool, example) {
   if (!ROUTING_ADVISOR_ENABLED) return
 
@@ -663,6 +646,21 @@ function getAlwaysLoadedSkills() {
   return [...ALWAYS_LOAD_SKILLS]
 }
 
+function buildSkillsToLoad(projectDir) {
+  const skillsToLoad = new Set()
+
+  for (const skill of ALWAYS_LOAD_SKILLS) {
+    skillsToLoad.add(skill)
+  }
+
+  const projectSkills = detectProjectSkills(projectDir)
+  for (const skill of projectSkills) {
+    skillsToLoad.add(skill)
+  }
+
+  return Array.from(skillsToLoad)
+}
+
 function formatSkillInjection(skillName, content) {
   return `<skill_content name="${skillName}">
 ${content}
@@ -672,6 +670,49 @@ ${content}
 The above skill "${skillName}" was auto-loaded at session start.
 Follow its instructions as part of your workflow.
 </system-reminder>`
+}
+
+function buildBootstrapParts(projectDir) {
+  const parts = []
+
+  if (ROUTING_ADVISOR_ENABLED) {
+    const routing = buildStartupRoutingGuidance()
+    if (routing) {
+      parts.push(routing)
+    }
+  }
+
+  for (const skillName of buildSkillsToLoad(projectDir)) {
+    const content = loadSkillContent(skillName, projectDir)
+    if (!content) continue
+    parts.push(formatSkillInjection(skillName, content))
+  }
+
+  return parts
+}
+
+function formatBootstrapSystemContent(parts: string[]) {
+  const normalized = parts.map((part) => part.trim()).filter(Boolean)
+  if (normalized.length === 0) return null
+  return normalized.join("\n\n")
+}
+
+function buildBootstrapSystemContent(projectDir) {
+  return formatBootstrapSystemContent(buildBootstrapParts(projectDir))
+}
+
+async function getOrCreateBootstrapSystemContent(
+  sessionID: string,
+  generator: () => string | null | Promise<string | null>,
+  cache = bootstrapSystemBySession,
+) {
+  if (cache.has(sessionID)) {
+    return cache.get(sessionID)
+  }
+
+  const content = await generator()
+  cache.set(sessionID, content)
+  return content
 }
 
 // ============================================================================
@@ -1574,71 +1615,17 @@ export const CleatPlugin = async (ctx) => {
       })
     },
 
-    // ========================================================================
-    // AUTO-SKILLS: Inject skills on session start
-    // ========================================================================
-    event: async ({ event }) => {
-      // Only trigger on new session creation
-      if (event.type !== "session.created") {
-        return
-      }
+    "experimental.chat.system.transform": async (input, output) => {
+      if (!input.sessionID) return
 
-      const sessionId = event.properties.session.id
-      const projectDir = ctx.directory
-      const skillsToLoad = new Set()
+      const content = await getOrCreateBootstrapSystemContent(
+        input.sessionID,
+        async () => buildBootstrapSystemContent(ctx.directory),
+      )
 
-      await maybeInjectStartupRouting(ctx, sessionId)
+      if (!content) return
 
-      // Add always-on skills
-      for (const skill of ALWAYS_LOAD_SKILLS) {
-        skillsToLoad.add(skill)
-      }
-
-      // Add project-detected skills
-      const projectSkills = detectProjectSkills(projectDir)
-      for (const skill of projectSkills) {
-        skillsToLoad.add(skill)
-      }
-
-      // Load and inject each skill
-      const loadedSkills = []
-      const failedSkills = []
-
-      for (const skillName of skillsToLoad) {
-        const content = loadSkillContent(skillName, projectDir)
-
-        if (!content) {
-          failedSkills.push(skillName)
-          continue
-        }
-
-        try {
-          await ctx.client.session.prompt({
-            path: { id: sessionId },
-            body: {
-              parts: [
-                {
-                  type: "text",
-                  text: formatSkillInjection(skillName, content),
-                },
-              ],
-              noReply: true,
-            },
-          })
-          loadedSkills.push(skillName)
-        } catch (err) {
-          failedSkills.push(skillName)
-        }
-      }
-
-      // Log results
-      if (loadedSkills.length > 0 || failedSkills.length > 0) {
-        await ctx.client.app.log({
-          service: "cleat-plugin",
-          level: "info",
-          message: `Auto-loaded skills: [${loadedSkills.join(", ")}]${failedSkills.length > 0 ? ` | Failed: [${failedSkills.join(", ")}]` : ""}`,
-        })
-      }
+      ;(output.system ||= []).push(content)
     },
 
     "command.execute.before": async (input, output) => {
@@ -1744,6 +1731,10 @@ export const __cleatInternals = {
   parseSlashCommand,
   detectAutomationContext,
   detectProjectSkills,
+  buildBootstrapParts,
+  formatBootstrapSystemContent,
+  buildBootstrapSystemContent,
+  getOrCreateBootstrapSystemContent,
   parseMakefileDetails,
   classifyMakeTarget,
   buildMappingFromClassifications,

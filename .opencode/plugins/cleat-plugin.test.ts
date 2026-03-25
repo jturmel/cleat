@@ -166,8 +166,61 @@ function testNoGitDetectedExternalSkills() {
   }
 }
 
+function testFormatBootstrapSystemContent() {
+  const text = __cleatInternals.formatBootstrapSystemContent([
+    "Use go-task tools.",
+    '<skill_content name="demo">demo</skill_content>',
+  ])
 
-function run() {
+  assert.equal(typeof text, "string")
+  assert.equal(text?.includes("Use go-task tools."), true)
+  assert.equal(text?.includes('<skill_content name="demo">demo</skill_content>'), true)
+}
+
+function testFormatBootstrapSystemContentEmpty() {
+  assert.equal(__cleatInternals.formatBootstrapSystemContent([]), null)
+  assert.equal(__cleatInternals.formatBootstrapSystemContent(["", "   "]), null)
+}
+
+async function testGetOrCreateBootstrapSystemContentCachesBySession() {
+  let calls = 0
+  const cache = new Map()
+  const generator = async () => {
+    calls += 1
+    return "cached bootstrap"
+  }
+
+  const first = await __cleatInternals.getOrCreateBootstrapSystemContent("s1", generator, cache)
+  const second = await __cleatInternals.getOrCreateBootstrapSystemContent("s1", generator, cache)
+
+  assert.equal(first, "cached bootstrap")
+  assert.equal(second, "cached bootstrap")
+  assert.equal(calls, 1)
+}
+
+async function testGetOrCreateBootstrapSystemContentSeparatesSessions() {
+  let calls = 0
+  const cache = new Map()
+  const generator = async () => `bootstrap-${++calls}`
+
+  const one = await __cleatInternals.getOrCreateBootstrapSystemContent("s1", generator, cache)
+  const two = await __cleatInternals.getOrCreateBootstrapSystemContent("s2", generator, cache)
+
+  assert.notEqual(one, two)
+}
+
+function testBuildBootstrapPartsIncludesRoutingGuidance() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-bootstrap-"))
+  try {
+    const parts = __cleatInternals.buildBootstrapParts(tempRoot)
+    assert.equal(Array.isArray(parts), true)
+    assert.equal(parts.some((part) => part.includes("Use go-task tools for task workflows.")), true)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+async function run() {
   testParseSlashCommand()
   testSimpleMakefileClassification()
   testNestedIncludeDetection()
@@ -179,7 +232,15 @@ function run() {
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()
+  testFormatBootstrapSystemContent()
+  testFormatBootstrapSystemContentEmpty()
+  await testGetOrCreateBootstrapSystemContentCachesBySession()
+  await testGetOrCreateBootstrapSystemContentSeparatesSessions()
+  testBuildBootstrapPartsIncludesRoutingGuidance()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 
-run()
+run().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`)
+  process.exit(1)
+})

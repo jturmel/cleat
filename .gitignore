@@ -28,9 +28,6 @@ coverage.html
 # Node dependencies
 /node_modules/
 
-# Local tools installed for this repository
-/.tools/
-
 # Local git worktrees
 /.worktrees/
 

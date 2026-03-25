@@ -1,5 +1,6 @@
 {
   "name": "cleat",
+  "version": "0.1.0",
   "private": true,
   "main": "./.opencode/plugins/cleat-entry.ts",
   "type": "module",
@@ -15,7 +16,6 @@
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"
   },
-  "version": "0.1.0",
   "description": "",
   "repository": {
     "type": "git",

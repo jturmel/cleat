@@ -30,3 +30,28 @@ Run tests:
 ```bash
 npm test
 ```
+
+## Run GitHub Actions locally with act
+
+Install `act` into this repo (root-level, reusable for other subprojects):
+
+```bash
+./scripts/install-act.sh
+```
+
+List available jobs:
+
+```bash
+./scripts/act -l
+```
+
+Run the CI workflow used on pull requests:
+
+```bash
+./scripts/act-ci.sh
+```
+
+Notes:
+- `scripts/act` always loads repo-level defaults from `.actrc`.
+- The local binary installs to `.tools/bin/act`.
+- `scripts/act-ci.sh` includes worktree-safe container options so git-based local dependency checks behave like CI.

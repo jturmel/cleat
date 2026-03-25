@@ -7,7 +7,7 @@ Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain,
 - exposes task-focused tools for listing, explaining, recommending, and running go-task tasks
 - parses `Taskfile.yml` and included taskfiles to build task metadata
 - helps guide Makefile-to-go-task migration workflows
-- auto-loads project skills that improve agent behavior in supported environments
+- provides task-aware startup guidance without loading external skill packs
 
 ## Development
 

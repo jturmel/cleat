@@ -15,7 +15,7 @@
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"
   },
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "",
   "repository": {
     "type": "git",
@@ -27,5 +27,6 @@
   "bugs": {
     "url": "https://github.com/jturmel/cleat/issues"
   },
-  "homepage": "https://github.com/jturmel/cleat#readme"
+  "homepage": "https://github.com/jturmel/cleat#readme",
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

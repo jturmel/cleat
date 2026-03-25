@@ -151,6 +151,21 @@ function testHasSeparateTaskSummary() {
   assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "Longer details" }), true)
 }
 
+function testNoAlwaysLoadedSkills() {
+  assert.deepEqual(__cleatInternals.getAlwaysLoadedSkills(), [])
+}
+
+function testNoGitDetectedExternalSkills() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-skills-"))
+
+  try {
+    mkdirSync(join(tempRoot, ".git"), { recursive: true })
+    assert.deepEqual(__cleatInternals.detectProjectSkills(tempRoot), [])
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
 
 function run() {
   testParseSlashCommand()
@@ -162,6 +177,8 @@ function run() {
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testHasSeparateTaskSummary()
+  testNoAlwaysLoadedSkills()
+  testNoGitDetectedExternalSkills()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

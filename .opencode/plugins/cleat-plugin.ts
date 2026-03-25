@@ -26,18 +26,10 @@ import { homedir } from "os"
 // ============================================================================
 
 // Skills that should always be loaded (workflow/process skills)
-const ALWAYS_LOAD_SKILLS = [
-  "verification-before-completion",
-]
+const ALWAYS_LOAD_SKILLS = []
 
 // Skills loaded based on project file detection
-const PROJECT_DETECTION_RULES = [
-  {
-    files: [".git"],
-    skill: "gh-cli-over-git",
-    description: "Detected git repo - loading gh-cli skill",
-  },
-]
+const PROJECT_DETECTION_RULES = []
 
 // Skill search paths (in priority order, later overrides earlier)
 const SKILL_SEARCH_PATHS = [
@@ -665,6 +657,10 @@ function detectProjectSkills(projectDir) {
   }
 
   return detectedSkills
+}
+
+function getAlwaysLoadedSkills() {
+  return [...ALWAYS_LOAD_SKILLS]
 }
 
 function formatSkillInjection(skillName, content) {
@@ -1747,6 +1743,7 @@ export const CleatPlugin = async (ctx) => {
 export const __cleatInternals = {
   parseSlashCommand,
   detectAutomationContext,
+  detectProjectSkills,
   parseMakefileDetails,
   classifyMakeTarget,
   buildMappingFromClassifications,
@@ -1754,6 +1751,7 @@ export const __cleatInternals = {
   buildPolicyScore,
   buildNamespaceSuggestion,
   buildCleatArtifactsForCommand,
+  getAlwaysLoadedSkills,
   hasSeparateTaskSummary,
   parseTaskfileYaml,
   loadTaskfile,

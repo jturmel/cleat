@@ -1,7 +1,7 @@
 {
   "name": "cleat",
   "private": true,
-  "main": "./.opencode/plugins/cleat-plugin.js",
+  "main": "./.opencode/plugins/cleat-entry.ts",
   "type": "module",
   "scripts": {
     "test": "npm run build && node .opencode/plugins/cleat-plugin.test.js",

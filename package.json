@@ -19,7 +19,7 @@
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"
   },
-  "description": "Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain, recommend, and run project workflows defined in `Taskfile.yml`.",
+  "description": "Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain, recommend, and run project workflows defined in `Taskfile.yaml` (with compatibility for existing `Taskfile.yml` repos).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jturmel/cleat.git"

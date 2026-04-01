@@ -1,6 +1,35 @@
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 
+const ROOT_TASKFILE_CANDIDATES = ["Taskfile.yaml", "Taskfile.yml"]
+
+function swapTaskfileExtension(path: string): string | null {
+  if (path.endsWith(".yaml")) return `${path.slice(0, -5)}.yml`
+  if (path.endsWith(".yml")) return `${path.slice(0, -4)}.yaml`
+  return null
+}
+
+export function resolveRootTaskfilePath(worktree: string): string | null {
+  for (const candidate of ROOT_TASKFILE_CANDIDATES) {
+    const candidatePath = join(worktree, candidate)
+    if (existsSync(candidatePath)) return candidatePath
+  }
+  return null
+}
+
+export function resolveTaskfileIncludePath(worktree: string, relativePath: string): string | null {
+  const directPath = join(worktree, relativePath)
+  if (existsSync(directPath)) return directPath
+
+  const alternate = swapTaskfileExtension(relativePath)
+  if (!alternate) return null
+
+  const alternatePath = join(worktree, alternate)
+  if (existsSync(alternatePath)) return alternatePath
+
+  return null
+}
+
 export type TaskDefinition = {
   name: string
   desc: string
@@ -166,8 +195,8 @@ export function parseTaskfileYaml(content: string): ParsedTaskfile {
 }
 
 export function loadTaskfile(worktree: string): ParsedTaskfile | null {
-  const taskfilePath = join(worktree, "Taskfile.yml")
-  if (!existsSync(taskfilePath)) {
+  const taskfilePath = resolveRootTaskfilePath(worktree)
+  if (!taskfilePath) {
     return null
   }
 
@@ -177,8 +206,8 @@ export function loadTaskfile(worktree: string): ParsedTaskfile | null {
   for (const [namespace, relativePath] of Object.entries(parsed.includes)) {
     if (!relativePath) continue
 
-    const includePath = join(worktree, relativePath)
-    if (!existsSync(includePath)) continue
+    const includePath = resolveTaskfileIncludePath(worktree, relativePath)
+    if (!includePath) continue
 
     try {
       const includeContent = readFileSync(includePath, "utf8")

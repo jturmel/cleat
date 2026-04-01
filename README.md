@@ -1,6 +1,6 @@
 # cleat
 
-Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain, recommend, and run project workflows defined in `Taskfile.yml`.
+Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain, recommend, and run project workflows defined in `Taskfile.yaml` (with compatibility for existing `Taskfile.yml` repos).
 
 ## OpenCode install and updates
 
@@ -21,7 +21,7 @@ When updating, move to the next release tag rather than tracking `main`.
 ## What it does
 
 - exposes task-focused tools for listing, explaining, recommending, and running go-task tasks
-- parses `Taskfile.yml` and included taskfiles to build task metadata
+- parses `Taskfile.yaml`/`Taskfile.yml` and included taskfiles to build task metadata
 - helps guide Makefile-to-go-task migration workflows
 - provides task-aware startup guidance without loading external skill packs
 

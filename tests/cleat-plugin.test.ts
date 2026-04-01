@@ -30,7 +30,7 @@ function testDetectAutomationContext() {
     mkdirSync(join(tempRoot, ".github", "workflows"), { recursive: true })
     mkdirSync(join(tempRoot, "taskfiles"), { recursive: true })
     writeFileSync(join(tempRoot, "Makefile"), "test:\n\techo test\n", "utf8")
-    writeFileSync(join(tempRoot, "Taskfile.yml"), 'version: "3"\n', "utf8")
+    writeFileSync(join(tempRoot, "Taskfile.yaml"), 'version: "3"\n', "utf8")
     writeFileSync(join(tempRoot, ".github", "workflows", "ci.yml"), "name: CI\n", "utf8")
     writeFileSync(join(tempRoot, "README.md"), "# Test\n", "utf8")
 
@@ -264,6 +264,66 @@ function testPromptQuestionPolicyUsesConfidence() {
   assert.equal(highPrompt.includes("Migration confidence: high (0.91)."), true)
 }
 
+function testPlanArtifactUsesCanonicalYamlGuidance() {
+  const scanArtifact = {
+    stage: "scan",
+    timestamp: new Date().toISOString(),
+    sourceCommand: "/cleat-plan-taskfile",
+    data: {
+      context: {
+        hasTaskfile: true,
+      },
+    },
+  }
+
+  const mappingArtifact = {
+    stage: "map",
+    timestamp: new Date().toISOString(),
+    sourceCommand: "/cleat-map-make-targets",
+    data: {
+      mapping: {
+        namespaceMap: {
+          db: ["migrate"],
+        },
+      },
+    },
+  }
+
+  const plan = __cleatInternals.buildPlanFromArtifacts(scanArtifact, mappingArtifact)
+
+  assert.equal(plan.orderedSteps.some((step) => step.includes("Taskfile.yaml")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("flatten: true")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("taskfiles/_root.yaml")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("taskfiles/scripts/")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("silent: true")), true)
+}
+
+function testPromptContainsCanonicalYamlGuidance() {
+  const prompt = __cleatInternals.buildCleatPrompt(
+    "cleat-migrate-makefile",
+    { artifacts: {} },
+    {
+      proposedSurfaceArtifact: {
+        stage: "proposed-surface",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-migrate-makefile",
+        data: {
+          proposedSurface: {
+            ambiguities: [],
+            confidence: { score: 0.91, level: "high", askQuestions: false },
+          },
+        },
+      },
+    },
+  )
+
+  assert.equal(prompt.includes("Taskfile.yaml"), true)
+  assert.equal(prompt.includes("taskfiles/_root.yaml"), true)
+  assert.equal(prompt.includes("flatten: true"), true)
+  assert.equal(prompt.includes("taskfiles/scripts/"), true)
+  assert.equal(prompt.includes("silent: true"), true)
+}
+
 function testTaskfileParsingModule() {
   const parsed = parseTaskfileYaml(`version: "3"
 includes:
@@ -344,6 +404,94 @@ tasks:
     assert.notEqual(parsed, null)
     assert.equal(parsed?.tasks.verify.name, "verify")
     assert.equal(parsed?.tasks["api:test"], undefined)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testTaskfilePrefersYamlWhenBothExist() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-prefer-yaml-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Taskfile.yaml"), `version: "3"
+tasks:
+  verify:
+    desc: Verify yaml
+`, "utf8")
+    writeFileSync(join(tempRoot, "Taskfile.yml"), `version: "2"
+tasks:
+  verify:
+    desc: Verify yml
+`, "utf8")
+
+    const parsed = loadTaskfile(tempRoot)
+    assert.notEqual(parsed, null)
+    assert.equal(parsed?.version, "3")
+    assert.equal(parsed?.tasks.verify.desc, "Verify yaml")
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testTaskfileLoadingIncludeExtensionFallback() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-fallback-"))
+
+  try {
+    mkdirSync(join(tempRoot, "taskfiles"), { recursive: true })
+    writeFileSync(join(tempRoot, "Taskfile.yaml"), `version: "3"
+includes:
+  api:
+    taskfile: ./taskfiles/api.yaml
+tasks:
+  verify:
+    desc: Verify everything
+    deps:
+      - task: api:test
+`, "utf8")
+    writeFileSync(join(tempRoot, "taskfiles", "api.yml"), `version: "3"
+tasks:
+  test:
+    desc: Run API tests
+`, "utf8")
+
+    const parsed = loadTaskfile(tempRoot)
+    assert.notEqual(parsed, null)
+    assert.equal(parsed?.tasks["api:test"]?.name, "api:test")
+    assert.equal(parsed?.tasks["api:test"]?.desc, "Run API tests")
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testScanArtifactIncludesLegacyYmlRenameSuggestions() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-scan-legacy-yml-"))
+
+  try {
+    mkdirSync(join(tempRoot, "taskfiles"), { recursive: true })
+    writeFileSync(join(tempRoot, "Taskfile.yml"), `version: "3"
+includes:
+  api:
+    taskfile: ./taskfiles/api.yml
+`, "utf8")
+    writeFileSync(join(tempRoot, "taskfiles", "api.yml"), `version: "3"
+tasks:
+  test:
+    desc: Run API tests
+`, "utf8")
+    writeFileSync(join(tempRoot, "taskfiles", "db.yaml"), `version: "3"
+tasks:
+  migrate:
+    desc: Run migrations
+`, "utf8")
+
+    const state = { artifacts: {} }
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-scan-makefile", tempRoot, state)
+    const scanData = artifacts?.scanArtifact?.data
+
+    assert.equal(Array.isArray(scanData?.taskfileInventory?.renameSuggestions), true)
+    assert.equal(scanData.taskfileInventory.renameSuggestions.some((item) => item.from === "Taskfile.yml" && item.to === "Taskfile.yaml"), true)
+    assert.equal(scanData.taskfileInventory.renameSuggestions.some((item) => item.from === "taskfiles/api.yml" && item.to === "taskfiles/api.yaml"), true)
+    assert.equal(scanData.taskfileInventory.renameSuggestions.some((item) => item.from === "taskfiles/db.yaml"), false)
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -482,9 +630,14 @@ async function run() {
   testScoreMigrationConfidenceNoPublicTargets()
   testProposedSurfaceConfidenceAndArtifact()
   testPromptQuestionPolicyUsesConfidence()
+  testPlanArtifactUsesCanonicalYamlGuidance()
+  testPromptContainsCanonicalYamlGuidance()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testTaskfileLoadingWithMissingInclude()
+  testTaskfilePrefersYamlWhenBothExist()
+  testTaskfileLoadingIncludeExtensionFallback()
+  testScanArtifactIncludesLegacyYmlRenameSuggestions()
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()

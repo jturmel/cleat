@@ -1,22 +1,28 @@
 import { tool } from "@opencode-ai/plugin"
-import { loadTaskfile, parseTaskfileYaml, type ParsedTaskfile, type TaskDefinition } from "../../tasks.js"
+import {
+  loadTaskfile,
+  parseTaskfileYaml,
+  resolveRootTaskfilePath,
+  type ParsedTaskfile,
+  type TaskDefinition,
+} from "../../tasks.js"
 import { execSync, spawn } from "child_process"
-import { existsSync, readFileSync } from "fs"
-import { join } from "path"
+import { existsSync, readFileSync, readdirSync } from "fs"
+import { join, relative } from "path"
 import { homedir } from "os"
 
 /**
  * Dynamic cleat plugin for OpenCode
  * 
  * Features:
- * 1. Parses Taskfile.yml and included taskfiles to build:
+ * 1. Parses Taskfile.yaml/Taskfile.yml and included taskfiles to build:
  *    - Task categories from namespaces
  *    - Intent mappings from descriptions
  *    - Safety metadata from naming patterns
  * 
  * 2. Auto-injects skills on session start:
  *    - Always-on skills (workflow/process skills)
- *    - Project-detected skills (e.g., Taskfile.yml → go-task skill)
+ *    - Project-detected skills (e.g., Taskfile.yaml → go-task skill)
  * 
  * Works across any go-task project without hardcoding.
  */
@@ -209,6 +215,49 @@ function readTextIfExists(path) {
   }
 }
 
+function collectTaskfileRelatedFiles(worktree) {
+  const discovered = []
+
+  for (const rootName of ["Taskfile.yaml", "Taskfile.yml"]) {
+    const rootPath = join(worktree, rootName)
+    if (existsSync(rootPath)) {
+      discovered.push(rootPath)
+    }
+  }
+
+  const taskfilesRoot = join(worktree, "taskfiles")
+  if (existsSync(taskfilesRoot)) {
+    const walk = (current) => {
+      const entries = readdirSync(current, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = join(current, entry.name)
+        if (entry.isDirectory()) {
+          walk(fullPath)
+          continue
+        }
+        if (entry.isFile() && /\.ya?ml$/i.test(entry.name)) {
+          discovered.push(fullPath)
+        }
+      }
+    }
+    walk(taskfilesRoot)
+  }
+
+  return Array.from(new Set(discovered))
+    .map((path) => relative(worktree, path).replace(/\\/g, "/"))
+    .sort()
+}
+
+function buildLegacyTaskfileRenameSuggestions(discoveredFiles) {
+  return discoveredFiles
+    .filter((path) => path.endsWith(".yml"))
+    .map((from) => ({
+      from,
+      to: `${from.slice(0, -4)}.yaml`,
+      reason: "Legacy .yml Taskfile-related file; prefer .yaml for canonical output.",
+    }))
+}
+
 function detectAutomationContext(worktree) {
   const makefileCandidates = ["Makefile", "makefile", "GNUmakefile"]
   const makefiles = makefileCandidates
@@ -227,7 +276,7 @@ function detectAutomationContext(worktree) {
   return {
     worktree,
     makefiles,
-    hasTaskfile: existsSync(join(worktree, "Taskfile.yml")),
+    hasTaskfile: Boolean(resolveRootTaskfilePath(worktree)),
     hasTaskfilesDir: existsSync(join(worktree, "taskfiles")),
     ciFiles,
     docFiles,
@@ -594,9 +643,10 @@ function buildPlanFromArtifacts(scanArtifact, mappingArtifact) {
   const hasTaskfile = !!scanArtifact?.data?.context?.hasTaskfile
   const steps = [
     "Review scan report and confirm migration goals.",
-    "Create/adjust Taskfile.yml root front-door commands.",
-    "Create/update namespaced taskfiles based on mapping.",
-    "Mark helper tasks internal and extract shell-heavy logic into scripts.",
+    "Create/adjust Taskfile.yaml with flatten: true and import taskfiles/_root.yaml.",
+    "Create/update taskfiles/_root.yaml with root/front-door tasks and namespace imports.",
+    "Create/update namespaced taskfiles as taskfiles/*.yaml based on mapping.",
+    "Mark helper tasks internal, extract shell-heavy logic to taskfiles/scripts/, and keep inline cmds silent: true.",
     "Add safety guard patterns for risky and destructive operations.",
     "Update docs and verify command parity.",
   ]
@@ -655,6 +705,9 @@ function buildCleatPrompt(commandName, state, artifacts) {
     `You are executing ${payload.command}.`,
     "Guide the user through Makefile-to-go-task migration with structured outputs.",
     "Apply cleat house style first: minimal root front door, deep namespaces, and normalized task naming.",
+    "Canonical output shape: root Taskfile.yaml uses flatten: true and imports taskfiles/_root.yaml.",
+    "Place namespace workflows in taskfiles/*.yaml and extract shell-heavy logic into taskfiles/scripts/.",
+    "When shell is inlined in cmds blocks, mark commands with silent: true to reduce noisy output.",
     "Default-first behavior: present a strong recommended layout and ask questions only when ambiguity or repo conflicts materially affect outcomes.",
     "Preferred root shape when analogs exist: dev, build, test, verify, deploy (promote should usually map under deploy namespace).",
     "Preferred normalization examples: db:migrate, db:load, verify:lint, test, verify:all.",
@@ -673,11 +726,18 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
   const makefilePath = context.makefiles[0]
   const makefileContent = makefilePath ? readTextIfExists(makefilePath) : ""
   const makefileData = makefileContent ? parseMakefileDetails(makefileContent) : { includes: [], phony: [], targets: [] }
+  const taskfileRelatedFiles = collectTaskfileRelatedFiles(worktree)
+  const taskfileRenameSuggestions = buildLegacyTaskfileRenameSuggestions(taskfileRelatedFiles)
   const classifications = makefileData.targets.map((target) => classifyMakeTarget(target))
   const mapping = buildMappingFromClassifications(classifications)
 
   const scanArtifact = makeArtifact("scan", `/${commandName}`, {
     context,
+    taskfileInventory: {
+      discoveredFiles: taskfileRelatedFiles,
+      legacyYmlFiles: taskfileRelatedFiles.filter((path) => path.endsWith(".yml")),
+      renameSuggestions: taskfileRenameSuggestions,
+    },
     makefile: {
       path: makefilePath || null,
       includes: makefileData.includes,
@@ -1350,7 +1410,7 @@ function getProjectData(worktree): ProjectData {
     return cached.data
   }
   
-  // Try parsing Taskfile.yml first
+  // Try parsing Taskfile.yaml/Taskfile.yml first
   let parsed = loadTaskfile(worktree)
   
   // Fallback to CLI if parsing fails or no tasks found
@@ -1425,8 +1485,8 @@ export const CleatPlugin = async (ctx) => {
           const title = args.category ? args.category : ""
           context.metadata({ title })
           
-          if (!existsSync(join(worktree, "Taskfile.yml"))) {
-            return `No Taskfile.yml found in ${worktree}. This project doesn't use go-task.`
+          if (!resolveRootTaskfilePath(worktree)) {
+            return `No Taskfile.yaml or Taskfile.yml found in ${worktree}. This project doesn't use go-task.`
           }
           
           const data = getProjectData(worktree)
@@ -1491,8 +1551,8 @@ export const CleatPlugin = async (ctx) => {
           // Set display title for the UI (shows after tool name)
           context.metadata({ title: args.task })
           
-          if (!existsSync(join(worktree, "Taskfile.yml"))) {
-            return `No Taskfile.yml found in ${worktree}.`
+          if (!resolveRootTaskfilePath(worktree)) {
+            return `No Taskfile.yaml or Taskfile.yml found in ${worktree}.`
           }
           
           const data = getProjectData(worktree)
@@ -1592,8 +1652,8 @@ export const CleatPlugin = async (ctx) => {
           // Set display title for the UI (shows after tool name)
           context.metadata({ title: args.intent })
           
-          if (!existsSync(join(worktree, "Taskfile.yml"))) {
-            return `No Taskfile.yml found in ${worktree}.`
+          if (!resolveRootTaskfilePath(worktree)) {
+            return `No Taskfile.yaml or Taskfile.yml found in ${worktree}.`
           }
           
           const data = getProjectData(worktree)
@@ -1728,8 +1788,8 @@ export const CleatPlugin = async (ctx) => {
           // Set display title for the UI (shows after tool name)
           context.metadata({ title: fullCommand })
           
-          if (!existsSync(join(worktree, "Taskfile.yml"))) {
-            return `No Taskfile.yml found in ${worktree}.`
+          if (!resolveRootTaskfilePath(worktree)) {
+            return `No Taskfile.yaml or Taskfile.yml found in ${worktree}.`
           }
           
           const data = getProjectData(worktree)

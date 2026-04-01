@@ -4,7 +4,7 @@ import { join, dirname } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 
-import { __cleatInternals } from "./cleat-plugin.js"
+import { CleatPlugin, __cleatInternals } from "./cleat-plugin.js"
 import { loadTaskfile, parseTaskfileYaml } from "../../tasks.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -166,8 +166,28 @@ function testNoGitDetectedExternalSkills() {
   }
 }
 
+async function testCleatCommandsAreRegistered() {
+  const hooks = await CleatPlugin({
+    client: {
+      app: { log: async () => {} },
+      session: { prompt: async () => {} },
+    },
+    project: {},
+    directory: process.cwd(),
+    worktree: process.cwd(),
+    serverUrl: new URL("http://localhost"),
+    $: undefined,
+  } as any)
 
-function run() {
+  const config: any = {}
+  await (hooks as any).config?.(config)
+
+  assert.equal(typeof config.command?.["cleat-scan-makefile"]?.description, "string")
+  assert.equal(typeof config.command?.["cleat-plan-taskfile"]?.template, "string")
+}
+
+
+async function run() {
   testParseSlashCommand()
   testSimpleMakefileClassification()
   testNestedIncludeDetection()
@@ -179,7 +199,8 @@ function run() {
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()
+  await testCleatCommandsAreRegistered()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 
-run()
+void run()

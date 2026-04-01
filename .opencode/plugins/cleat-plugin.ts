@@ -57,6 +57,29 @@ const CLEAT_COMMANDS = new Set([
   "cleat-shore-up-taskfile",
 ])
 
+const CLEAT_COMMAND_CONFIG = {
+  "cleat-migrate-makefile": {
+    description: "Migrate Makefile workflows to Taskfile structure",
+    template: "Run the cleat migration workflow.\n\nUser context: $ARGUMENTS",
+  },
+  "cleat-scan-makefile": {
+    description: "Scan current Makefile/task automation context",
+    template: "Run the cleat scan workflow.\n\nUser context: $ARGUMENTS",
+  },
+  "cleat-map-make-targets": {
+    description: "Map Makefile targets into go-task namespaces",
+    template: "Run the cleat target mapping workflow.\n\nUser context: $ARGUMENTS",
+  },
+  "cleat-plan-taskfile": {
+    description: "Create or update a Taskfile migration plan",
+    template: "Run the cleat planning workflow.\n\nUser context: $ARGUMENTS",
+  },
+  "cleat-shore-up-taskfile": {
+    description: "Harden Taskfile safety and command parity",
+    template: "Run the cleat shore-up workflow.\n\nUser context: $ARGUMENTS",
+  },
+}
+
 const CLEAT_POLICY = {
   structure: [
     "Prefer curated root front-door tasks for common workflows.",
@@ -1159,6 +1182,17 @@ function getProjectData(worktree): ProjectData {
 
 export const CleatPlugin = async (ctx) => {
   return {
+    config: async (config) => {
+      config.command = config.command || {}
+
+      for (const [name, commandConfig] of Object.entries(CLEAT_COMMAND_CONFIG)) {
+        config.command[name] = {
+          description: commandConfig.description,
+          template: commandConfig.template,
+        }
+      }
+    },
+
     tool: {
       // Tool names are prefixed in TUI display, so:
       // - "task_list" displays as "task_list <title>"

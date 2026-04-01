@@ -2,7 +2,7 @@
   "name": "cleat",
   "version": "0.1.0",
   "private": true,
-  "main": "./.opencode/plugins/cleat-entry.ts",
+  "main": "./.opencode/plugins/cleat-entry.js",
   "type": "module",
   "scripts": {
     "test": "npm run build && node .opencode/plugins/cleat-plugin.test.js",
@@ -16,7 +16,7 @@
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"
   },
-  "description": "",
+  "description": "Cleat is a task-aware AI CLI plugin focused on helping agents discover, explain, recommend, and run project workflows defined in `Taskfile.yml`.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jturmel/cleat.git"

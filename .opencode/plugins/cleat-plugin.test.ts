@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { tmpdir } from "node:os"
@@ -186,6 +187,28 @@ async function testCleatCommandsAreRegistered() {
   assert.equal(typeof config.command?.["cleat-plan-taskfile"]?.template, "string")
 }
 
+function testPackageRootImportAfterInstall() {
+  const consumerDir = mkdtempSync(join(tmpdir(), "cleat-consumer-"))
+
+  try {
+    execFileSync("npm", ["init", "-y", "--prefix", consumerDir], { stdio: "pipe" })
+    execFileSync("npm", ["install", "--prefix", consumerDir, "file:/home/jt/dev/jturmel/cleat"], { stdio: "pipe" })
+    const imported = execFileSync(
+      "node",
+      ["--input-type=module", "-e", "import('cleat').then(() => process.stdout.write('ok\\n'))"],
+      {
+        cwd: consumerDir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    )
+
+    assert.equal(imported.trim(), "ok")
+  } finally {
+    rmSync(consumerDir, { recursive: true, force: true })
+  }
+}
+
 
 async function run() {
   testParseSlashCommand()
@@ -200,6 +223,7 @@ async function run() {
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()
   await testCleatCommandsAreRegistered()
+  testPackageRootImportAfterInstall()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

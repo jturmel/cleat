@@ -31,4 +31,4 @@ jobs:
           consumer_dir="$(mktemp -d)"
           npm init -y --prefix "$consumer_dir"
           npm install --prefix "$consumer_dir" "git+file://$GITHUB_WORKSPACE"
-          node --input-type=module -e "import(process.argv[1]).then(() => process.stdout.write('git install import: PASS\n'))" "$consumer_dir/node_modules/cleat/.opencode/plugins/cleat-plugin.js"
+          (cd "$consumer_dir" && node --input-type=module -e "import('cleat').then(() => process.stdout.write('git install import: PASS\n'))")

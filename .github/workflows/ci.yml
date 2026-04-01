@@ -29,6 +29,14 @@ jobs:
       - name: Verify git dependency install
         run: |
           consumer_dir="$(mktemp -d)"
-          npm init -y --prefix "$consumer_dir"
-          npm install --prefix "$consumer_dir" "git+file://$GITHUB_WORKSPACE"
-          (cd "$consumer_dir" && node --input-type=module -e "import('cleat').then(() => process.stdout.write('git install import: PASS\n'))")
+          install_spec="git+file://$GITHUB_WORKSPACE"
+          if [ "${ACT:-}" = "true" ]; then
+            # act runs can miss full worktree git metadata; use plain file install locally.
+            install_spec="file:$GITHUB_WORKSPACE"
+          fi
+          (
+            cd "$consumer_dir"
+            npm init -y
+            npm install "$install_spec"
+            node --input-type=module -e "import('cleat').then(() => process.stdout.write('git install import: PASS\n'))"
+          )

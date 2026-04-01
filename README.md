@@ -63,3 +63,12 @@ Run tests:
 ```bash
 npm test
 ```
+
+Run the GitHub CI workflow locally (requires Docker):
+
+```bash
+npm run install:act
+npm run test:workflow
+```
+
+You can pass additional `act` flags through `npm run test:workflow -- <flags>`.

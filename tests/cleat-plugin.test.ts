@@ -3,14 +3,15 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { tmpdir } from "node:os"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
-import { CleatPlugin, __cleatInternals } from "./cleat-plugin.js"
-import { loadTaskfile, parseTaskfileYaml } from "../../tasks.js"
+import { CleatPlugin, __cleatInternals } from "../.opencode/plugins/cleat-plugin.js"
+import { isDirectExecution } from "../.opencode/plugins/module-exec.js"
+import { loadTaskfile, parseTaskfileYaml } from "../tasks.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const repoRoot = join(__dirname, "..", "..")
-const fixtures = join(__dirname, "..", "..", "fixtures")
+const repoRoot = join(__dirname, "..")
+const fixtures = join(__dirname, "..", "fixtures")
 
 function readFixture(name) {
   return readFileSync(join(fixtures, name), "utf8")
@@ -370,6 +371,16 @@ function testNoGitDetectedExternalSkills() {
   }
 }
 
+function testIsDirectExecutionHelper() {
+  assert.equal(isDirectExecution("file:///tmp/example.mjs", undefined), false)
+
+  const scriptPath = join(tmpdir(), "cleat-direct-run-check.mjs")
+  const scriptUrl = pathToFileURL(scriptPath).href
+
+  assert.equal(isDirectExecution(scriptUrl, scriptPath), true)
+  assert.equal(isDirectExecution(scriptUrl, join(tmpdir(), "different-script.mjs")), false)
+}
+
 async function testCleatCommandsAreRegistered() {
   const hooks = await CleatPlugin({
     client: {
@@ -428,6 +439,8 @@ function testPackageRootImportFromPackedTarball() {
     const jsonPayload = jsonStart >= 0 && jsonEnd >= jsonStart ? packJson.slice(jsonStart, jsonEnd + 1) : "[]"
     const packed = JSON.parse(jsonPayload)
     assert.equal(Array.isArray(packed) && packed.length > 0, true)
+    const packedFiles = Array.isArray(packed[0]?.files) ? packed[0].files : []
+    assert.equal(packedFiles.some((file) => String(file?.path || "").startsWith("tests/")), false)
     tarballPath = join(packDir, packed[0].filename)
 
     execFileSync("npm", ["init", "-y"], { cwd: consumerDir, stdio: "pipe" })
@@ -475,10 +488,13 @@ async function run() {
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()
+  testIsDirectExecutionHelper()
   await testCleatCommandsAreRegistered()
   testPackageRootImportAfterInstall()
   testPackageRootImportFromPackedTarball()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 
-void run()
+if (isDirectExecution(import.meta.url, process.argv[1])) {
+  void run()
+}

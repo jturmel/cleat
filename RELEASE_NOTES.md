@@ -1,5 +1,22 @@
 # Release Notes
 
+## v0.4.2 (2026-04-01)
+
+### Highlights
+- Prevented test runner side effects during plugin startup by moving tests out of the plugin directory and guarding direct execution.
+- Excluded `tests/` from packaged artifacts to keep OpenCode installs clean and deterministic.
+
+### Upgrade
+Pin the plugin to this release tag:
+
+```json
+{
+  "plugin": [
+    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
+  ]
+}
+```
+
 ## v0.4.0 (2026-04-01)
 
 ### Highlights

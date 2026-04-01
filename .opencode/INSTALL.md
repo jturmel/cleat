@@ -11,7 +11,7 @@ Add cleat to the `plugin` array in your `opencode.json`:
 ```json
 {
   "plugin": [
-    "cleat@git+https://github.com/jturmel/cleat.git#v0.3.0"
+    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
   ]
 }
 ```
@@ -20,10 +20,10 @@ Then restart OpenCode.
 
 ## Update to a new release
 
-When a new release is published (for example `v0.3.1`), update the plugin ref and reinstall:
+When a new release is published (for example `v0.4.2`), update the plugin ref and reinstall:
 
 ```bash
-opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.3.1" --global --force
+opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2" --global --force
 ```
 
 Using pinned tags gives deterministic installs and avoids ambiguity from floating branch refs.
@@ -61,7 +61,7 @@ readlink -f ~/.cache/opencode/node_modules/cleat
 
 ```bash
 cd ~/.cache/opencode
-npm install --force "cleat@git+https://github.com/jturmel/cleat.git#v0.3.0"
+npm install --force "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
 ```
 
 3. Restart OpenCode and re-check `opencode debug config`.

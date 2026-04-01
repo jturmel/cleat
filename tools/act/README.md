@@ -7,6 +7,11 @@ This repo supports local execution of `.github/workflows/ci.yml` with `act`.
 - fast feedback when editing CI workflows
 - reproducible local run for the `test` job before pushing
 
+## Prerequisites
+
+- **Go** (1.20+) — must be installed and on your `PATH`. `npm run install:act` compiles `act` via `go install`.
+- **Docker** — must be running. `act` uses Docker to spin up container environments that mirror GitHub-hosted runners.
+
 ## Install pinned act version
 
 From repo root:

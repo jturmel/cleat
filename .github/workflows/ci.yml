@@ -38,5 +38,5 @@ jobs:
             cd "$consumer_dir"
             npm init -y
             npm install "$install_spec"
-            node --input-type=module -e "import('cleat').then(() => process.stdout.write('git install import: PASS\n'))"
+            node --input-type=module -e "import('cleat').then(() => process.stdout.write('install import: PASS\n'))"
           )

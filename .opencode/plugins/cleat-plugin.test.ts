@@ -82,6 +82,134 @@ function testPlanArtifactFromMapping() {
   assert.equal(Array.isArray(plan.candidateDiffHints), true)
 }
 
+function testOpinionatedRootSurfaceDefaults() {
+  const classifications = [
+    { name: "dev", role: "public", risk: "risky", traits: { prod_like: false, shell_heavy: true, depends_on_many: false } },
+    { name: "dj-test", role: "public", risk: "safe", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+    { name: "py-lint", role: "public", risk: "safe", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+    { name: "build", role: "public", risk: "safe", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+    { name: "gcp-deploy", role: "public", risk: "risky", traits: { prod_like: true, shell_heavy: true, depends_on_many: false } },
+  ]
+
+  const mapping = __cleatInternals.buildMappingFromClassifications(classifications)
+
+  assert.equal(Array.isArray(mapping.recommendedRoot), true)
+  assert.equal(mapping.recommendedRoot.includes("dev"), true)
+  assert.equal(mapping.recommendedRoot.includes("build"), true)
+  assert.equal(mapping.recommendedRoot.includes("test"), true)
+  assert.equal(mapping.recommendedRoot.includes("verify"), true)
+  assert.equal(mapping.recommendedRoot.includes("deploy"), true)
+}
+
+function testOpinionatedNamespaceNormalization() {
+  const classifications = [
+    { name: "dj-migrate-dev", role: "public", risk: "risky", traits: { prod_like: true, shell_heavy: false, depends_on_many: false } },
+    { name: "load-dev-fixtures", role: "public", risk: "risky", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+    { name: "py-lint", role: "public", risk: "safe", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+    { name: "dj-test", role: "public", risk: "safe", traits: { prod_like: false, shell_heavy: false, depends_on_many: false } },
+  ]
+
+  const mapping = __cleatInternals.buildMappingFromClassifications(classifications)
+
+  assert.equal(Array.isArray(mapping.renameSuggestions), true)
+  assert.equal(mapping.renameSuggestions.some((item) => item.from === "dj-migrate-dev" && item.to === "db:migrate"), true)
+  assert.equal(mapping.renameSuggestions.some((item) => item.from === "load-dev-fixtures" && item.to === "db:load"), true)
+  assert.equal(mapping.renameSuggestions.some((item) => item.from === "py-lint" && item.to === "verify:lint"), true)
+  assert.equal(mapping.renameSuggestions.some((item) => item.from === "dj-test" && item.to === "test"), true)
+}
+
+function testDeployPromotePlacement() {
+  const classifications = [
+    { name: "deploy", role: "public", risk: "risky", traits: { prod_like: true, shell_heavy: false, depends_on_many: false } },
+    { name: "promote", role: "public", risk: "risky", traits: { prod_like: true, shell_heavy: false, depends_on_many: false } },
+  ]
+
+  const mapping = __cleatInternals.buildMappingFromClassifications(classifications)
+
+  assert.equal(mapping.recommendedRoot.includes("deploy"), true)
+  assert.equal(mapping.recommendedRoot.includes("promote"), false)
+  assert.equal(mapping.renameSuggestions.some((item) => item.from === "promote" && item.to === "deploy:promote"), true)
+}
+
+function testProposedSurfaceConfidenceAndArtifact() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-migrate-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Makefile"), `
+dev:
+\techo dev
+
+dj-test:
+\techo test
+
+py-lint:
+\techo lint
+
+build:
+\techo build
+
+gcp-deploy:
+\techo deploy
+`, "utf8")
+
+    const state = { artifacts: {} }
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-migrate-makefile", tempRoot, state)
+    const proposed = artifacts?.proposedSurfaceArtifact?.data?.proposedSurface
+
+    assert.notEqual(proposed, null)
+    assert.equal(Array.isArray(proposed.rootEntrypoints), true)
+    assert.equal(proposed.rootEntrypoints.includes("deploy"), true)
+    assert.equal(typeof proposed.confidence?.score, "number")
+    assert.equal(["low", "medium", "high"].includes(proposed.confidence?.level), true)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testPromptQuestionPolicyUsesConfidence() {
+  const lowPrompt = __cleatInternals.buildCleatPrompt(
+    "cleat-migrate-makefile",
+    { artifacts: {} },
+    {
+      proposedSurfaceArtifact: {
+        stage: "proposed-surface",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-migrate-makefile",
+        data: {
+          proposedSurface: {
+            ambiguities: ["custom-target"],
+            confidence: { score: 0.41, level: "low", askQuestions: true },
+          },
+        },
+      },
+    },
+  )
+
+  assert.equal(lowPrompt.includes("Question policy: ask one focused question only for unresolved ambiguities"), true)
+  assert.equal(lowPrompt.includes("Migration confidence: low (0.41)."), true)
+
+  const highPrompt = __cleatInternals.buildCleatPrompt(
+    "cleat-migrate-makefile",
+    { artifacts: {} },
+    {
+      proposedSurfaceArtifact: {
+        stage: "proposed-surface",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-migrate-makefile",
+        data: {
+          proposedSurface: {
+            ambiguities: [],
+            confidence: { score: 0.91, level: "high", askQuestions: false },
+          },
+        },
+      },
+    },
+  )
+
+  assert.equal(highPrompt.includes("Question policy: do not ask structural preference questions"), true)
+  assert.equal(highPrompt.includes("Migration confidence: high (0.91)."), true)
+}
+
 function testTaskfileParsingModule() {
   const parsed = parseTaskfileYaml(`version: "3"
 includes:
@@ -217,6 +345,11 @@ async function run() {
   testRiskAndDestructiveClassification()
   testShellHeavyTraitAndMapping()
   testPlanArtifactFromMapping()
+  testOpinionatedRootSurfaceDefaults()
+  testOpinionatedNamespaceNormalization()
+  testDeployPromotePlacement()
+  testProposedSurfaceConfidenceAndArtifact()
+  testPromptQuestionPolicyUsesConfidence()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testHasSeparateTaskSummary()

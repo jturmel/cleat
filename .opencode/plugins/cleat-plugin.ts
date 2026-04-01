@@ -334,18 +334,62 @@ function classifyMakeTarget(target) {
   }
 }
 
-function buildNamespaceSuggestion(name) {
+function inferCanonicalTaskName(name) {
   const lower = name.toLowerCase()
-  if (lower.includes("test") || lower.includes("lint") || lower.includes("verify")) return "verify"
-  if (lower.includes("migrate") || lower.includes("db") || lower.includes("fixture")) return "db"
-  if (lower.includes("docker") || lower.includes("compose")) return "docker"
-  if (lower.includes("deploy") || lower.includes("release") || lower.includes("promote")) return "deploy"
-  if (lower.includes("build") || lower.includes("assets") || lower.includes("frontend")) return "frontend"
+
+  if (lower === "dev" || lower === "run" || lower === "start") return "dev"
+
+  if (lower.includes("deploy") || lower.includes("release") || lower.includes("publish")) {
+    return "deploy"
+  }
+
+  if (lower.includes("promote")) return "deploy:promote"
+
+  if (lower.includes("migrate")) {
+    if (lower.includes("prod") || lower.includes("production")) return "db:migrate:prod"
+    return "db:migrate"
+  }
+
+  if ((lower.includes("load") || lower.includes("seed")) && (lower.includes("fixture") || lower.includes("data"))) {
+    return "db:load"
+  }
+
+  if (lower.includes("dump") && lower.includes("data")) return "db:dump"
+
+  if (lower.includes("lint")) return "verify:lint"
+  if (lower.includes("test")) return "test"
+
+  if (lower.includes("check") || lower.includes("verify") || lower.includes("ci")) return "verify"
+
+  if (lower.includes("build")) return "build"
+
+  if (lower.includes("frontend") || lower.includes("vite") || lower.includes("tailwind")) return "frontend:build"
+
+  if (lower.includes("run-maintenance") || lower.includes("maintenance")) return "dev:maintenance"
+
+  if (lower.includes("dev")) return "dev"
+
+  return null
+}
+
+function buildNamespaceSuggestion(name) {
+  const canonical = inferCanonicalTaskName(name)
+  if (canonical) {
+    if (canonical.includes(":")) return canonical.split(":")[0]
+    if (["test", "verify"].includes(canonical)) return "verify"
+    if (canonical === "build") return "frontend"
+    if (canonical === "deploy") return "deploy"
+    if (canonical === "dev") return "dev"
+  }
+
+  const lower = name.toLowerCase()
+  if (lower.includes("db") || lower.includes("fixture")) return "db"
+  if (lower.includes("docker") || lower.includes("compose")) return "dev"
   return "dev"
 }
 
 function buildPolicyScore(mapping) {
-  const rootCount = mapping.rootCandidates.length
+  const rootCount = (mapping.recommendedRoot || []).length
   const namespaceCount = Object.keys(mapping.namespaceMap).length
   const safetyCount = mapping.safetyRecommendations.length
   const extractionCount = mapping.scriptExtractionCandidates.length
@@ -359,17 +403,146 @@ function buildPolicyScore(mapping) {
   }
 }
 
+function scoreMigrationConfidence({ publicCount, canonicalMatches, ambiguousTargets, namespaceCount, rootCount }) {
+  if (publicCount === 0) {
+    return {
+      score: 0.45,
+      level: "low",
+      askQuestions: true,
+      reasons: ["No public targets were detected, so migration intent is ambiguous."],
+    }
+  }
+
+  const coverage = canonicalMatches / publicCount
+  const ambiguityRate = ambiguousTargets.length / publicCount
+
+  let score = 0
+  score += coverage * 0.5
+  score += Math.min(namespaceCount / 3, 1) * 0.2
+  score += rootCount > 0 ? 0.15 : 0
+  score += ambiguityRate === 0 ? 0.15 : Math.max(0, 0.15 - ambiguityRate * 0.2)
+
+  const normalizedScore = Number(score.toFixed(2))
+  const level = normalizedScore >= 0.75 ? "high" : normalizedScore >= 0.55 ? "medium" : "low"
+
+  const reasons = []
+  if (coverage < 0.6) {
+    reasons.push("Canonical naming coverage is limited across public targets.")
+  }
+  if (namespaceCount < 2) {
+    reasons.push("Only a narrow namespace set was inferred.")
+  }
+  if (ambiguousTargets.length > 0) {
+    reasons.push(`Unmapped targets: ${ambiguousTargets.slice(0, 5).join(", ")}`)
+  }
+  if (!reasons.length) {
+    reasons.push("Canonical naming coverage and namespace clarity are strong.")
+  }
+
+  return {
+    score: normalizedScore,
+    level,
+    askQuestions: level !== "high" || ambiguousTargets.length > 0,
+    reasons,
+  }
+}
+
+function buildProposedSurface(mapping, classifications) {
+  const namespaces: Record<string, string[]> = {}
+  const normalizedTasks: string[] = []
+  const productionVariants: string[] = []
+  const ambiguousTargets: string[] = []
+  let canonicalMatches = 0
+  let publicCount = 0
+
+  for (const item of classifications) {
+    if (item.role !== "public") continue
+    publicCount += 1
+
+    const canonical = inferCanonicalTaskName(item.name)
+    if (!canonical) {
+      ambiguousTargets.push(item.name)
+      continue
+    }
+
+    canonicalMatches += 1
+    normalizedTasks.push(canonical)
+
+    if (canonical.includes(":")) {
+      const namespace = canonical.split(":")[0]
+      if (!namespaces[namespace]) namespaces[namespace] = []
+      namespaces[namespace].push(canonical)
+    }
+
+    if (canonical.endsWith(":prod") || item.traits.prod_like) {
+      productionVariants.push(canonical)
+    }
+  }
+
+  const uniqueNamespaces = Object.fromEntries(
+    Object.entries(namespaces).map(([name, tasks]) => [name, Array.from(new Set<string>(tasks)).sort()]),
+  )
+
+  const confidence = scoreMigrationConfidence({
+    publicCount,
+    canonicalMatches,
+    ambiguousTargets,
+    namespaceCount: Object.keys(uniqueNamespaces).length,
+    rootCount: (mapping.recommendedRoot || []).length,
+  })
+
+  const questionFocus = ambiguousTargets.map((target) => ({
+    target,
+    reason: "No clear canonical mapping detected",
+  }))
+
+  return {
+    rootEntrypoints: mapping.recommendedRoot || [],
+    namespaces: uniqueNamespaces,
+    normalizedTasks: Array.from(new Set(normalizedTasks)).sort(),
+    renameSuggestions: mapping.renameSuggestions || [],
+    internalHelpers: mapping.internalCandidates || [],
+    productionVariants: Array.from(new Set(productionVariants)).sort(),
+    ambiguities: ambiguousTargets,
+    questionFocus,
+    confidence,
+  }
+}
+
 function buildMappingFromClassifications(classifications) {
   const rootCandidates = []
   const internalCandidates = []
   const namespaceMap = {}
   const scriptExtractionCandidates = []
   const safetyRecommendations = []
+  const renameSuggestions = []
+  const rootSet = new Set()
+  const signals = {
+    hasTest: false,
+    hasLint: false,
+    hasBuild: false,
+    hasDeploy: false,
+    hasDev: false,
+  }
 
   for (const item of classifications) {
     const namespace = buildNamespaceSuggestion(item.name)
     if (!namespaceMap[namespace]) namespaceMap[namespace] = []
     namespaceMap[namespace].push(item.name)
+
+    const canonical = inferCanonicalTaskName(item.name)
+    if (canonical && canonical !== item.name) {
+      renameSuggestions.push({
+        from: item.name,
+        to: canonical,
+      })
+    }
+
+    if (canonical === "dev" || namespace === "dev") signals.hasDev = true
+    if (canonical === "build") signals.hasBuild = true
+    if (canonical === "test") signals.hasTest = true
+    if (canonical === "verify" || (canonical || "").startsWith("verify:")) signals.hasLint = true
+    if (canonical === "deploy" || (canonical || "").startsWith("deploy:")) signals.hasDeploy = true
 
     if (item.role === "helper") {
       internalCandidates.push(item.name)
@@ -388,16 +561,31 @@ function buildMappingFromClassifications(classifications) {
     }
   }
 
+  if (signals.hasDev) rootSet.add("dev")
+  if (signals.hasBuild) rootSet.add("build")
+  if (signals.hasTest) rootSet.add("test")
+  if (signals.hasTest || signals.hasLint || signals.hasBuild) rootSet.add("verify")
+  if (signals.hasDeploy) rootSet.add("deploy")
+
+  if (signals.hasTest && signals.hasLint && signals.hasBuild) {
+    renameSuggestions.push({ from: "(aggregate)", to: "verify:all" })
+  }
+
   const mapping = {
     rootCandidates,
+    recommendedRoot: Array.from(rootSet),
     namespaceMap,
     internalCandidates,
     scriptExtractionCandidates,
     safetyRecommendations,
+    renameSuggestions,
   }
+
+  const proposedSurface = buildProposedSurface(mapping, classifications)
 
   return {
     ...mapping,
+    proposedSurface,
     policyScore: buildPolicyScore(mapping),
   }
 }
@@ -437,6 +625,17 @@ function buildCleatPrompt(commandName, state, artifacts) {
 
   const stage = stageByCommand[commandName] || "guided"
   const priorStages = Object.keys(state.artifacts)
+  const proposedSurface = artifacts?.proposedSurfaceArtifact?.data?.proposedSurface
+    || artifacts?.mappingArtifact?.data?.mapping?.proposedSurface
+    || null
+  const confidence = proposedSurface?.confidence || null
+  const ambiguityCount = Array.isArray(proposedSurface?.ambiguities) ? proposedSurface.ambiguities.length : 0
+  const questionPolicyLine = confidence?.askQuestions
+    ? `Question policy: ask one focused question only for unresolved ambiguities (count: ${ambiguityCount}).`
+    : "Question policy: do not ask structural preference questions; apply defaults unless user or repo constraints require overrides."
+  const confidenceLine = confidence
+    ? `Migration confidence: ${confidence.level} (${confidence.score}).`
+    : "Migration confidence: unavailable."
 
   const payload = {
     command: `/${commandName}`,
@@ -455,7 +654,12 @@ function buildCleatPrompt(commandName, state, artifacts) {
   return [
     `You are executing ${payload.command}.`,
     "Guide the user through Makefile-to-go-task migration with structured outputs.",
-    "Ask one focused question at a time when choices materially affect outcomes.",
+    "Apply cleat house style first: minimal root front door, deep namespaces, and normalized task naming.",
+    "Default-first behavior: present a strong recommended layout and ask questions only when ambiguity or repo conflicts materially affect outcomes.",
+    "Preferred root shape when analogs exist: dev, build, test, verify, deploy (promote should usually map under deploy namespace).",
+    "Preferred normalization examples: db:migrate, db:load, verify:lint, test, verify:all.",
+    questionPolicyLine,
+    confidenceLine,
     "Emit artifacts using the provided schema fields (stage, timestamp, sourceCommand, data).",
     "Use policy rules to justify recommendations (structure, safety, uncertainty).",
     `Current stage: ${payload.stage}.`,
@@ -490,6 +694,10 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
     mapping,
   })
 
+  const proposedSurfaceArtifact = makeArtifact("proposed-surface", `/${commandName}`, {
+    proposedSurface: mapping.proposedSurface,
+  })
+
   const planArtifact = makeArtifact("plan", `/${commandName}`, {
     plan: buildPlanFromArtifacts(scanArtifact, mappingArtifact),
   })
@@ -500,20 +708,24 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
       mappingArtifact,
+      proposedSurfaceArtifact,
     },
     "cleat-plan-taskfile": {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
+      proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
       planArtifact,
     },
     "cleat-shore-up-taskfile": {
       classificationArtifact,
       mappingArtifact,
+      proposedSurfaceArtifact,
     },
     "cleat-migrate-makefile": {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
       mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
+      proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
       planArtifact,
     },
   }
@@ -1780,10 +1992,14 @@ export const __cleatInternals = {
   detectProjectSkills,
   parseMakefileDetails,
   classifyMakeTarget,
+  inferCanonicalTaskName,
+  scoreMigrationConfidence,
+  buildProposedSurface,
   buildMappingFromClassifications,
   buildPlanFromArtifacts,
   buildPolicyScore,
   buildNamespaceSuggestion,
+  buildCleatPrompt,
   buildCleatArtifactsForCommand,
   getAlwaysLoadedSkills,
   hasSeparateTaskSummary,

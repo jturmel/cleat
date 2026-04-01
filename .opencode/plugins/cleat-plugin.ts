@@ -60,23 +60,23 @@ const CLEAT_COMMANDS = new Set([
 const CLEAT_COMMAND_CONFIG = {
   "cleat-migrate-makefile": {
     description: "Migrate Makefile workflows to Taskfile structure",
-    template: "Run the cleat migration workflow.\n\nUser context: $ARGUMENTS",
+    template: "Run the cleat migration workflow.\n\n$ARGUMENTS",
   },
   "cleat-scan-makefile": {
     description: "Scan current Makefile/task automation context",
-    template: "Run the cleat scan workflow.\n\nUser context: $ARGUMENTS",
+    template: "Run the cleat scan workflow.\n\n$ARGUMENTS",
   },
   "cleat-map-make-targets": {
     description: "Map Makefile targets into go-task namespaces",
-    template: "Run the cleat target mapping workflow.\n\nUser context: $ARGUMENTS",
+    template: "Run the cleat target mapping workflow.\n\n$ARGUMENTS",
   },
   "cleat-plan-taskfile": {
     description: "Create or update a Taskfile migration plan",
-    template: "Run the cleat planning workflow.\n\nUser context: $ARGUMENTS",
+    template: "Run the cleat planning workflow.\n\n$ARGUMENTS",
   },
   "cleat-shore-up-taskfile": {
     description: "Harden Taskfile safety and command parity",
-    template: "Run the cleat shore-up workflow.\n\nUser context: $ARGUMENTS",
+    template: "Run the cleat shore-up workflow.\n\n$ARGUMENTS",
   },
 }
 

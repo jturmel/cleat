@@ -28,6 +28,10 @@ coverage.html
 # Node dependencies
 /node_modules/
 
+# Local workflow testing artifacts
+/tools/act/bin/
+/.act/
+
 # TypeScript build outputs
 /.opencode/plugins/cleat-plugin.js
 /.opencode/plugins/cleat-plugin.test.js

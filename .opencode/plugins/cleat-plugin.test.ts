@@ -9,6 +9,7 @@ import { CleatPlugin, __cleatInternals } from "./cleat-plugin.js"
 import { loadTaskfile, parseTaskfileYaml } from "../../tasks.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const repoRoot = join(__dirname, "..", "..")
 const fixtures = join(__dirname, "..", "..", "fixtures")
 
 function readFixture(name) {
@@ -19,6 +20,29 @@ function testParseSlashCommand() {
   assert.equal(__cleatInternals.parseSlashCommand("/cleat-migrate-makefile"), "cleat-migrate-makefile")
   assert.equal(__cleatInternals.parseSlashCommand("cleat-scan-makefile"), "cleat-scan-makefile")
   assert.equal(__cleatInternals.parseSlashCommand("/not-a-cleat-command"), null)
+}
+
+function testDetectAutomationContext() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-context-"))
+
+  try {
+    mkdirSync(join(tempRoot, ".github", "workflows"), { recursive: true })
+    mkdirSync(join(tempRoot, "taskfiles"), { recursive: true })
+    writeFileSync(join(tempRoot, "Makefile"), "test:\n\techo test\n", "utf8")
+    writeFileSync(join(tempRoot, "Taskfile.yml"), 'version: "3"\n', "utf8")
+    writeFileSync(join(tempRoot, ".github", "workflows", "ci.yml"), "name: CI\n", "utf8")
+    writeFileSync(join(tempRoot, "README.md"), "# Test\n", "utf8")
+
+    const context = __cleatInternals.detectAutomationContext(tempRoot)
+
+    assert.equal(context.makefiles.length, 1)
+    assert.equal(context.hasTaskfile, true)
+    assert.equal(context.hasTaskfilesDir, true)
+    assert.equal(context.ciFiles.includes(".github/workflows/ci.yml"), true)
+    assert.equal(context.docFiles.includes("README.md"), true)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 }
 
 function testSimpleMakefileClassification() {
@@ -129,6 +153,35 @@ function testDeployPromotePlacement() {
   assert.equal(mapping.recommendedRoot.includes("deploy"), true)
   assert.equal(mapping.recommendedRoot.includes("promote"), false)
   assert.equal(mapping.renameSuggestions.some((item) => item.from === "promote" && item.to === "deploy:promote"), true)
+}
+
+function testInferCanonicalTaskName() {
+  assert.equal(__cleatInternals.inferCanonicalTaskName("run"), "dev")
+  assert.equal(__cleatInternals.inferCanonicalTaskName("release-app"), "deploy")
+  assert.equal(__cleatInternals.inferCanonicalTaskName("dj-migrate-prod"), "db:migrate:prod")
+  assert.equal(__cleatInternals.inferCanonicalTaskName("check-all"), "verify")
+  assert.equal(__cleatInternals.inferCanonicalTaskName("totally-custom-task"), null)
+}
+
+function testBuildNamespaceSuggestion() {
+  assert.equal(__cleatInternals.buildNamespaceSuggestion("dj-test"), "verify")
+  assert.equal(__cleatInternals.buildNamespaceSuggestion("gcp-deploy"), "deploy")
+  assert.equal(__cleatInternals.buildNamespaceSuggestion("docker-up"), "dev")
+  assert.equal(__cleatInternals.buildNamespaceSuggestion("fixture-seed"), "db")
+}
+
+function testScoreMigrationConfidenceNoPublicTargets() {
+  const confidence = __cleatInternals.scoreMigrationConfidence({
+    publicCount: 0,
+    canonicalMatches: 0,
+    ambiguousTargets: [],
+    namespaceCount: 0,
+    rootCount: 0,
+  })
+
+  assert.equal(confidence.level, "low")
+  assert.equal(confidence.askQuestions, true)
+  assert.equal(typeof confidence.score, "number")
 }
 
 function testProposedSurfaceConfidenceAndArtifact() {
@@ -273,6 +326,28 @@ tasks:
   }
 }
 
+function testTaskfileLoadingWithMissingInclude() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-missing-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Taskfile.yml"), `version: "3"
+includes:
+  api:
+    taskfile: ./taskfiles/api.yml
+tasks:
+  verify:
+    desc: Verify everything
+`, "utf8")
+
+    const parsed = loadTaskfile(tempRoot)
+    assert.notEqual(parsed, null)
+    assert.equal(parsed?.tasks.verify.name, "verify")
+    assert.equal(parsed?.tasks["api:test"], undefined)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
 function testHasSeparateTaskSummary() {
   assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "", summary: "Only summary" }), false)
   assert.equal(__cleatInternals.hasSeparateTaskSummary({ desc: "Short desc", summary: "" }), false)
@@ -319,8 +394,8 @@ function testPackageRootImportAfterInstall() {
   const consumerDir = mkdtempSync(join(tmpdir(), "cleat-consumer-"))
 
   try {
-    execFileSync("npm", ["init", "-y", "--prefix", consumerDir], { stdio: "pipe" })
-    execFileSync("npm", ["install", "--prefix", consumerDir, "file:/home/jt/dev/jturmel/cleat"], { stdio: "pipe" })
+    execFileSync("npm", ["init", "-y"], { cwd: consumerDir, stdio: "pipe" })
+    execFileSync("npm", ["install", `file:${repoRoot}`], { cwd: consumerDir, stdio: "pipe" })
     const imported = execFileSync(
       "node",
       ["--input-type=module", "-e", "import('cleat').then(() => process.stdout.write('ok\\n'))"],
@@ -337,9 +412,50 @@ function testPackageRootImportAfterInstall() {
   }
 }
 
+function testPackageRootImportFromPackedTarball() {
+  const consumerDir = mkdtempSync(join(tmpdir(), "cleat-consumer-packed-"))
+  const packDir = mkdtempSync(join(tmpdir(), "cleat-pack-"))
+  let tarballPath = ""
+
+  try {
+    const packJson = execFileSync("npm", ["pack", "--json", "--pack-destination", packDir], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const jsonStart = packJson.indexOf("[")
+    const jsonEnd = packJson.lastIndexOf("]")
+    const jsonPayload = jsonStart >= 0 && jsonEnd >= jsonStart ? packJson.slice(jsonStart, jsonEnd + 1) : "[]"
+    const packed = JSON.parse(jsonPayload)
+    assert.equal(Array.isArray(packed) && packed.length > 0, true)
+    tarballPath = join(packDir, packed[0].filename)
+
+    execFileSync("npm", ["init", "-y"], { cwd: consumerDir, stdio: "pipe" })
+    execFileSync("npm", ["install", tarballPath], { cwd: consumerDir, stdio: "pipe" })
+    const imported = execFileSync(
+      "node",
+      ["--input-type=module", "-e", "import('cleat').then(() => process.stdout.write('ok\\n'))"],
+      {
+        cwd: consumerDir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    )
+
+    assert.equal(imported.trim(), "ok")
+  } finally {
+    rmSync(consumerDir, { recursive: true, force: true })
+    rmSync(packDir, { recursive: true, force: true })
+    if (tarballPath) {
+      rmSync(tarballPath, { force: true })
+    }
+  }
+}
+
 
 async function run() {
   testParseSlashCommand()
+  testDetectAutomationContext()
   testSimpleMakefileClassification()
   testNestedIncludeDetection()
   testRiskAndDestructiveClassification()
@@ -348,15 +464,20 @@ async function run() {
   testOpinionatedRootSurfaceDefaults()
   testOpinionatedNamespaceNormalization()
   testDeployPromotePlacement()
+  testInferCanonicalTaskName()
+  testBuildNamespaceSuggestion()
+  testScoreMigrationConfidenceNoPublicTargets()
   testProposedSurfaceConfidenceAndArtifact()
   testPromptQuestionPolicyUsesConfidence()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
+  testTaskfileLoadingWithMissingInclude()
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
   testNoGitDetectedExternalSkills()
   await testCleatCommandsAreRegistered()
   testPackageRootImportAfterInstall()
+  testPackageRootImportFromPackedTarball()
   process.stdout.write("cleat-plugin tests: PASS\n")
 }
 

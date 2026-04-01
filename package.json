@@ -5,8 +5,11 @@
   "main": "./.opencode/plugins/cleat-entry.js",
   "type": "module",
   "scripts": {
-    "test": "npm run build && node .opencode/plugins/cleat-plugin.test.js",
+    "test": "npm run test:unit",
+    "test:unit": "npm run build && node .opencode/plugins/cleat-plugin.test.js",
+    "test:workflow": "./scripts/run-ci-local.sh",
     "build": "tsc",
+    "install:act": "mkdir -p tools/act/bin && GOBIN=\"$PWD/tools/act/bin\" go install github.com/nektos/act@v0.2.87",
     "prepare": "npm run build"
   },
   "dependencies": {

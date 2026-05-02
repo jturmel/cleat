@@ -105,6 +105,76 @@ const CLEAT_POLICY = {
   ],
 }
 
+function buildMigrationPolicy() {
+  return {
+    canonicalLayout: {
+      rootTaskfile: "Taskfile.yaml",
+      rootTasksFile: "taskfiles/_root.yaml",
+      namespaceTaskfilePattern: "taskfiles/<namespace>.yaml",
+      scriptsDir: "taskfiles/scripts/",
+      generatedExtension: ".yaml",
+      rootTaskfileRole: "index-only",
+      rootTasksFileRole: "root aggregates and front-door workflows",
+    },
+    migrationCompatibility: {
+      readLegacyYml: true,
+      generateLegacyYml: false,
+      guidance: "Read existing Taskfile.yml files for compatibility, but generate and recommend .yaml paths only.",
+    },
+    rootAggregateSemantics: {
+      build: "Run the normal build set.",
+      "build:clean": "Clean safe/generated build outputs for the build scope, then run build.",
+      clean: "Clear project-owned local artifacts aggressively enough to start fresh without touching unrelated host/global resources.",
+      test: "Run the normal test suite.",
+      verify: "Run fast day-to-day verification.",
+      "verify:all": "Run comprehensive verification, including heavier checks when present.",
+    },
+    namespaceGuidance: {
+      defaults: ["db", "infra"],
+      conditional: ["gcp"],
+      inferredPackageExamples: ["api", "web", "worker", "admin"],
+      preferInfraOver: ["tf", "terraform"],
+      excludedDefaults: ["act", "sfdc", "native"],
+    },
+    inlineScriptPolicy: {
+      keepInlineWhen: [
+        "single-command task",
+        "short shell snippet of roughly 7-8 lines or fewer",
+      ],
+      extractToScriptsWhen: [
+        "longer than roughly 7-8 lines",
+        "requires set -euo pipefail",
+        "uses branching",
+        "uses loops",
+        "uses cleanup traps",
+        "needs meaningful comments",
+        "is reused across tasks",
+      ],
+      scriptsDir: "taskfiles/scripts/",
+    },
+    cleanPolicy: {
+      rootCleanScope: "project-owned local artifacts",
+      composeMayRemove: ["services", "images", "volumes"],
+      preserve: ["unrelated host/global Docker resources", "resources outside the project scope"],
+      explicitDestructiveVariants: ["clean:volumes", "db:reset", "docker:prune"],
+    },
+    safetyPromptPolicy: {
+      preferredMechanism: "go-task prompt:",
+      avoidByDefault: "hand-rolled interactive shell read prompts",
+      promptTaskPatterns: [
+        "db:migrate:prod",
+        "db:reset",
+        "db:reset:prod",
+        "clean when it removes volumes",
+        "clean:volumes",
+        "deploy:*",
+        "infra:apply",
+        "mutating gcp:* tasks",
+      ],
+    },
+  }
+}
+
 const cleatArtifactsBySession = new Map()
 
 const routingStateBySession = new Map()
@@ -394,6 +464,14 @@ function inferCanonicalTaskName(name) {
 
   if (lower.includes("promote")) return "deploy:promote"
 
+  if (lower.includes("terraform") || lower.includes("tofu") || lower.startsWith("tf-")) {
+    if (lower.includes("apply")) return "infra:apply"
+    if (lower.includes("plan")) return "infra:plan"
+    if (lower.includes("destroy")) return "infra:destroy"
+    if (lower.includes("init")) return "infra:init"
+    return "infra"
+  }
+
   if (lower.includes("migrate")) {
     if (lower.includes("prod") || lower.includes("production")) return "db:migrate:prod"
     return "db:migrate"
@@ -433,6 +511,7 @@ function buildNamespaceSuggestion(name) {
 
   const lower = name.toLowerCase()
   if (lower.includes("db") || lower.includes("fixture")) return "db"
+  if (lower.includes("terraform") || lower.includes("tofu") || lower.startsWith("tf-") || lower.includes("infra")) return "infra"
   if (lower.includes("docker") || lower.includes("compose")) return "dev"
   return "dev"
 }
@@ -643,11 +722,12 @@ function buildPlanFromArtifacts(scanArtifact, mappingArtifact) {
   const hasTaskfile = !!scanArtifact?.data?.context?.hasTaskfile
   const steps = [
     "Review scan report and confirm migration goals.",
-    "Create/adjust Taskfile.yaml with flatten: true and import taskfiles/_root.yaml.",
-    "Create/update taskfiles/_root.yaml with root/front-door tasks and namespace imports.",
-    "Create/update namespaced taskfiles as taskfiles/*.yaml based on mapping.",
-    "Mark helper tasks internal, extract shell-heavy logic to taskfiles/scripts/, and keep inline cmds silent: true.",
-    "Add safety guard patterns for risky and destructive operations.",
+    "Create/adjust Taskfile.yaml as a minimal index with flatten: true and import taskfiles/_root.yaml.",
+    "Create/update taskfiles/_root.yaml with root/front-door tasks and standard aggregates where signaled: build, build:clean, clean, test, verify, verify:all.",
+    "Create/update namespaced taskfiles as taskfiles/*.yaml based on generic domains such as db:* and infra:* plus inferred package/domain namespaces.",
+    "Keep one-command tasks and shell snippets of roughly 7-8 lines or fewer inline with silent: true; extract longer or complex shell to taskfiles/scripts/.",
+    "Make clean clear project-scoped Compose services, images, and volumes when those resources are local to the project; avoid unrelated host/global cleanup.",
+    "Use go-task prompt: for risky or destructive tasks such as db:migrate:prod, db:reset, clean with volumes, deploy:*, and infra:apply.",
     "Update docs and verify command parity.",
   ]
 
@@ -656,9 +736,10 @@ function buildPlanFromArtifacts(scanArtifact, mappingArtifact) {
     namespaces: Object.keys(mappingArtifact?.data?.mapping?.namespaceMap || {}),
     orderedSteps: steps,
     verification: [
-      "Run task list/help checks and targeted task execution dry-runs.",
-      "Run project verification gate for CI parity.",
-      "Confirm safety paths require explicit confirmation.",
+      "Run task --list to verify discoverability.",
+      "Run task --summary build, task --summary test, and task --summary verify when those tasks exist.",
+      "Run task --summary clean and inspect prompt:/scope before executing destructive cleanup.",
+      "Confirm risky and destructive paths use go-task prompt: or explicit non-interactive alternatives.",
     ],
     candidateDiffHints: [],
   }
@@ -704,12 +785,15 @@ function buildCleatPrompt(commandName, state, artifacts) {
   return [
     `You are executing ${payload.command}.`,
     "Guide the user through Makefile-to-go-task migration with structured outputs.",
-    "Apply cleat house style first: minimal root front door, deep namespaces, and normalized task naming.",
-    "Canonical output shape: root Taskfile.yaml uses flatten: true and imports taskfiles/_root.yaml.",
-    "Place namespace workflows in taskfiles/*.yaml and extract shell-heavy logic into taskfiles/scripts/.",
-    "When shell is inlined in cmds blocks, mark commands with silent: true to reduce noisy output.",
+    "Apply cleat house style first: canonical .yaml layout, minimal root index, root aggregates in taskfiles/_root.yaml, and normalized task naming.",
+    "Canonical output shape: root Taskfile.yaml uses flatten: true and imports taskfiles/_root.yaml; namespace workflows live in taskfiles/<namespace>.yaml; helper scripts live in taskfiles/scripts/.",
+    "Generated guidance uses .yaml only. Read existing Taskfile.yml files for compatibility, but recommend renaming Taskfile-related .yml files to .yaml.",
+    "Preferred root aggregate semantics when matching signals exist: build, build:clean, clean, test, verify, verify:all.",
+    "Keep one-command tasks and shell snippets of roughly 7-8 lines or fewer inline with silent: true; extract longer or complex shell into taskfiles/scripts/.",
+    "Clean guidance: root clean may remove project-scoped Compose services, images, and volumes when clearly local to the project; avoid unrelated host/global cleanup.",
+    "Safety guidance: use go-task prompt: for risky or destructive tasks instead of hand-rolled shell read prompts.",
+    "Preferred namespaces: db:* for database workflows, infra:* for IaC workflows, gcp:* only when Google Cloud is clearly present, and inferred package/domain namespaces from project signals.",
     "Default-first behavior: present a strong recommended layout and ask questions only when ambiguity or repo conflicts materially affect outcomes.",
-    "Preferred root shape when analogs exist: dev, build, test, verify, deploy (promote should usually map under deploy namespace).",
     "Preferred normalization examples: db:migrate, db:load, verify:lint, test, verify:all.",
     questionPolicyLine,
     confidenceLine,
@@ -758,34 +842,42 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
     proposedSurface: mapping.proposedSurface,
   })
 
+  const migrationPolicyArtifact = makeArtifact("migration-policy", `/${commandName}`, {
+    migrationPolicy: buildMigrationPolicy(),
+  })
+
   const planArtifact = makeArtifact("plan", `/${commandName}`, {
     plan: buildPlanFromArtifacts(scanArtifact, mappingArtifact),
   })
 
   const artifactsByCommand = {
-    "cleat-scan-makefile": { scanArtifact },
+    "cleat-scan-makefile": { scanArtifact, migrationPolicyArtifact },
     "cleat-map-make-targets": {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
       mappingArtifact,
       proposedSurfaceArtifact,
+      migrationPolicyArtifact,
     },
     "cleat-plan-taskfile": {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
       proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
+      migrationPolicyArtifact: state.artifacts.migrationPolicyArtifact || migrationPolicyArtifact,
       planArtifact,
     },
     "cleat-shore-up-taskfile": {
       classificationArtifact,
       mappingArtifact,
       proposedSurfaceArtifact,
+      migrationPolicyArtifact,
     },
     "cleat-migrate-makefile": {
       scanArtifact: state.artifacts.scanArtifact || scanArtifact,
       classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
       mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
       proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
+      migrationPolicyArtifact: state.artifacts.migrationPolicyArtifact || migrationPolicyArtifact,
       planArtifact,
     },
   }
@@ -2061,6 +2153,7 @@ export const __cleatInternals = {
   buildPolicyScore,
   buildCleatPrompt,
   buildCleatArtifactsForCommand,
+  buildMigrationPolicy,
   getAlwaysLoadedSkills,
   hasSeparateTaskSummary,
   parseTaskfileYaml,

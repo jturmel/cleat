@@ -29,12 +29,14 @@ When updating, move to the next release tag rather than tracking `main`.
 
 Cleat migration guidance is intentionally opinionated when mapping Makefile workflows to go-task:
 
-- keep root commands as a small front door (`dev`, `build`, `test`, `verify`, `deploy`) when analogs exist
-- keep most workflow depth in namespaces (`db:*`, `verify:*`, `deploy:*`, `dev:*`)
-- normalize legacy names toward consistent task names when there is clear signal
-- treat safety as separate from root placement (`deploy` can be root and still production-risky)
-- emit a dedicated `proposedSurfaceArtifact` block with deterministic recommendations
-- include migration confidence scoring to decide whether guided mode should ask questions or apply defaults directly
+- generate canonical `.yaml` files only: `Taskfile.yaml`, `taskfiles/_root.yaml`, and `taskfiles/<namespace>.yaml`
+- keep `Taskfile.yaml` as a small index; place root/front-door workflows in `taskfiles/_root.yaml`
+- keep one-command tasks and shell snippets up to roughly 7-8 lines inline; move longer or complex shell into `taskfiles/scripts/`
+- prefer root aggregate semantics for `build`, `build:clean`, `clean`, `test`, `verify`, and `verify:all` when matching signals exist
+- let root `clean` clear project-scoped local artifacts aggressively, including Compose services, images, and volumes when clearly local to the project
+- use go-task `prompt:` for risky or destructive tasks instead of hand-rolled shell confirmations
+- prefer generic namespaces such as `db:*` and `infra:*`; infer package/domain namespaces from the project instead of baking in project-specific defaults
+- preserve existing command runners during migration unless the user explicitly wants a hard cutover
 
 Common normalization examples:
 

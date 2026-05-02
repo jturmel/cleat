@@ -171,6 +171,31 @@ function testBuildNamespaceSuggestion() {
   assert.equal(__cleatInternals.buildNamespaceSuggestion("fixture-seed"), "db")
 }
 
+function testMigrationPolicyRootSurfaceAndNamespaceGuidance() {
+  const policy = __cleatInternals.buildMigrationPolicy()
+
+  assert.equal(typeof policy.rootAggregateSemantics.build, "string")
+  assert.equal(typeof policy.rootAggregateSemantics["build:clean"], "string")
+  assert.equal(typeof policy.rootAggregateSemantics.clean, "string")
+  assert.equal(typeof policy.rootAggregateSemantics.test, "string")
+  assert.equal(typeof policy.rootAggregateSemantics.verify, "string")
+  assert.equal(typeof policy.rootAggregateSemantics["verify:all"], "string")
+
+  assert.equal(policy.namespaceGuidance.defaults.includes("db"), true)
+  assert.equal(policy.namespaceGuidance.defaults.includes("infra"), true)
+  assert.equal(policy.namespaceGuidance.conditional.includes("gcp"), true)
+  assert.equal(policy.namespaceGuidance.preferInfraOver.includes("terraform"), true)
+  assert.equal(policy.namespaceGuidance.excludedDefaults.includes("act"), true)
+  assert.equal(policy.namespaceGuidance.excludedDefaults.includes("sfdc"), true)
+  assert.equal(policy.namespaceGuidance.excludedDefaults.includes("native"), true)
+}
+
+function testInfraNamespacePreferredForTerraformTargets() {
+  assert.equal(__cleatInternals.inferCanonicalTaskName("terraform-plan"), "infra:plan")
+  assert.equal(__cleatInternals.inferCanonicalTaskName("tf-apply"), "infra:apply")
+  assert.equal(__cleatInternals.buildNamespaceSuggestion("terraform-plan"), "infra")
+}
+
 function testScoreMigrationConfidenceNoPublicTargets() {
   const confidence = __cleatInternals.scoreMigrationConfidence({
     publicCount: 0,
@@ -215,6 +240,31 @@ gcp-deploy:
     assert.equal(proposed.rootEntrypoints.includes("deploy"), true)
     assert.equal(typeof proposed.confidence?.score, "number")
     assert.equal(["low", "medium", "high"].includes(proposed.confidence?.level), true)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testMigrationCommandsIncludePolicyArtifact() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-policy-artifact-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Makefile"), `
+build:
+	echo build
+
+clean:
+	docker compose down --volumes --rmi local
+`, "utf8")
+
+    const state = { artifacts: {} }
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-migrate-makefile", tempRoot, state)
+    const policy = artifacts?.migrationPolicyArtifact?.data?.migrationPolicy
+
+    assert.notEqual(policy, null)
+    assert.equal(policy.canonicalLayout.rootTaskfile, "Taskfile.yaml")
+    assert.equal(policy.cleanPolicy.composeMayRemove.includes("volumes"), true)
+    assert.equal(policy.safetyPromptPolicy.preferredMechanism, "go-task prompt:")
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -296,6 +346,10 @@ function testPlanArtifactUsesCanonicalYamlGuidance() {
   assert.equal(plan.orderedSteps.some((step) => step.includes("taskfiles/_root.yaml")), true)
   assert.equal(plan.orderedSteps.some((step) => step.includes("taskfiles/scripts/")), true)
   assert.equal(plan.orderedSteps.some((step) => step.includes("silent: true")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("build:clean")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("verify:all")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("project-scoped Compose services, images, and volumes")), true)
+  assert.equal(plan.orderedSteps.some((step) => step.includes("go-task prompt:")), true)
 }
 
 function testPromptContainsCanonicalYamlGuidance() {
@@ -322,6 +376,26 @@ function testPromptContainsCanonicalYamlGuidance() {
   assert.equal(prompt.includes("flatten: true"), true)
   assert.equal(prompt.includes("taskfiles/scripts/"), true)
   assert.equal(prompt.includes("silent: true"), true)
+  assert.equal(prompt.includes("build:clean"), true)
+  assert.equal(prompt.includes("verify:all"), true)
+  assert.equal(prompt.includes("7-8 lines"), true)
+  assert.equal(prompt.includes("project-scoped Compose services, images, and volumes"), true)
+  assert.equal(prompt.includes("go-task prompt:"), true)
+  assert.equal(prompt.includes("act:*"), false)
+  assert.equal(prompt.includes("sfdc:*"), false)
+  assert.equal(prompt.includes("native:*"), false)
+}
+
+function testMigrationPolicyUsesCanonicalYamlLayout() {
+  const policy = __cleatInternals.buildMigrationPolicy()
+
+  assert.equal(policy.canonicalLayout.rootTaskfile, "Taskfile.yaml")
+  assert.equal(policy.canonicalLayout.rootTasksFile, "taskfiles/_root.yaml")
+  assert.equal(policy.canonicalLayout.namespaceTaskfilePattern, "taskfiles/<namespace>.yaml")
+  assert.equal(policy.canonicalLayout.scriptsDir, "taskfiles/scripts/")
+  assert.equal(policy.canonicalLayout.generatedExtension, ".yaml")
+  assert.equal(policy.migrationCompatibility.readLegacyYml, true)
+  assert.equal(policy.migrationCompatibility.generateLegacyYml, false)
 }
 
 function testTaskfileParsingModule() {
@@ -627,11 +701,15 @@ async function run() {
   testDeployPromotePlacement()
   testInferCanonicalTaskName()
   testBuildNamespaceSuggestion()
+  testMigrationPolicyRootSurfaceAndNamespaceGuidance()
+  testInfraNamespacePreferredForTerraformTargets()
   testScoreMigrationConfidenceNoPublicTargets()
   testProposedSurfaceConfidenceAndArtifact()
+  testMigrationCommandsIncludePolicyArtifact()
   testPromptQuestionPolicyUsesConfidence()
   testPlanArtifactUsesCanonicalYamlGuidance()
   testPromptContainsCanonicalYamlGuidance()
+  testMigrationPolicyUsesCanonicalYamlLayout()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testTaskfileLoadingWithMissingInclude()

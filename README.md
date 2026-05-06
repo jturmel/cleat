@@ -11,7 +11,7 @@ Recommended install style is a pinned release tag, for example:
 ```json
 {
   "plugin": [
-    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
+    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4"
   ]
 }
 ```

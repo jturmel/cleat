@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Changed
+- Replaced staged Makefile migration slash commands with `/cleat-sync-from-makefile`, a single plan-then-apply workflow for initial Taskfile bootstrap and incremental Makefile coverage sync.
+
 ## [0.4.0] - 2026-04-01
 
 ### Added

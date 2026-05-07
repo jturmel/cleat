@@ -41,33 +41,12 @@ const ROUTING_REINFORCE_MAX_PER_SESSION = 2;
 const ROUTING_MISS_THRESHOLD = 3;
 const TASK_TOOL_NAMES = new Set(["task_recommend", "task_list", "task_help", "task_run"]);
 const TASK_INTENT_KEYWORDS = ["task", "lint", "test", "build", "verify", "migrate"];
-const CLEAT_COMMANDS = new Set([
-    "cleat-migrate-makefile",
-    "cleat-scan-makefile",
-    "cleat-map-make-targets",
-    "cleat-plan-taskfile",
-    "cleat-shore-up-taskfile",
-]);
+const CLEAT_SYNC_COMMAND = "cleat-sync-from-makefile";
+const CLEAT_COMMANDS = new Set([CLEAT_SYNC_COMMAND]);
 const CLEAT_COMMAND_CONFIG = {
-    "cleat-migrate-makefile": {
-        description: "Migrate Makefile workflows to Taskfile structure",
-        template: "Run the cleat migration workflow.\n\n$ARGUMENTS",
-    },
-    "cleat-scan-makefile": {
-        description: "Scan current Makefile/task automation context",
-        template: "Run the cleat scan workflow.\n\n$ARGUMENTS",
-    },
-    "cleat-map-make-targets": {
-        description: "Map Makefile targets into go-task namespaces",
-        template: "Run the cleat target mapping workflow.\n\n$ARGUMENTS",
-    },
-    "cleat-plan-taskfile": {
-        description: "Create or update a Taskfile migration plan",
-        template: "Run the cleat planning workflow.\n\n$ARGUMENTS",
-    },
-    "cleat-shore-up-taskfile": {
-        description: "Harden Taskfile safety and command parity",
-        template: "Run the cleat shore-up workflow.\n\n$ARGUMENTS",
+    [CLEAT_SYNC_COMMAND]: {
+        description: "Sync Taskfile coverage from Makefile workflows",
+        template: "Run the cleat Makefile sync workflow. Present a concise sync plan, then apply Taskfile-side changes unless ambiguity blocks safe progress.\n\n$ARGUMENTS",
     },
 };
 const CLEAT_POLICY = {
@@ -653,16 +632,79 @@ function buildPlanFromArtifacts(scanArtifact, mappingArtifact) {
         candidateDiffHints: [],
     };
 }
-function buildCleatPrompt(commandName, state, artifacts) {
-    const stageByCommand = {
-        "cleat-migrate-makefile": "guided",
-        "cleat-scan-makefile": "scan",
-        "cleat-map-make-targets": "map",
-        "cleat-plan-taskfile": "plan",
-        "cleat-shore-up-taskfile": "shore-up",
+function collectTaskfileTaskNames(worktree) {
+    const parsed = loadTaskfile(worktree);
+    if (!parsed)
+        return [];
+    return Object.keys(parsed?.tasks || {}).filter((name) => !parsed.tasks[name]?.internal).sort();
+}
+function buildMakefileCoverage(classifications, taskfileTaskNames, hasTaskfile) {
+    const taskfileTaskSet = new Set(taskfileTaskNames);
+    const coveredTaskfileTasks = new Set();
+    const entries = [];
+    for (const item of classifications) {
+        if (item.role !== "public") {
+            entries.push({
+                makeTarget: item.name,
+                status: "intentionally-skipped",
+                taskName: null,
+                risk: item.risk,
+                reason: "Makefile target appears to be helper/internal rather than a public workflow.",
+            });
+            continue;
+        }
+        const canonical = inferCanonicalTaskName(item.name);
+        const candidates = [item.name, canonical].filter(Boolean);
+        const existingTask = candidates.find((candidate) => taskfileTaskSet.has(candidate)) || null;
+        if (existingTask) {
+            coveredTaskfileTasks.add(existingTask);
+            entries.push({
+                makeTarget: item.name,
+                status: "covered",
+                taskName: existingTask,
+                risk: item.risk,
+                reason: `Existing Taskfile task ${existingTask} accounts for this Makefile target.`,
+            });
+            continue;
+        }
+        if (canonical) {
+            entries.push({
+                makeTarget: item.name,
+                status: "needs-taskfile-task",
+                taskName: canonical,
+                risk: item.risk,
+                reason: `Add Taskfile coverage using canonical task name ${canonical}.`,
+            });
+            continue;
+        }
+        entries.push({
+            makeTarget: item.name,
+            status: "ambiguous",
+            taskName: null,
+            risk: item.risk,
+            reason: "No confident canonical Taskfile name was inferred; ask one focused question before applying this target.",
+        });
+    }
+    const publicEntries = entries.filter((entry) => entry.status !== "intentionally-skipped");
+    const taskfileOnlyTasks = taskfileTaskNames.filter((name) => !coveredTaskfileTasks.has(name));
+    return {
+        mode: hasTaskfile ? "update" : "bootstrap",
+        summary: {
+            publicMakeTargets: publicEntries.length,
+            covered: publicEntries.filter((entry) => entry.status === "covered").length,
+            needsTaskfileTask: publicEntries.filter((entry) => entry.status === "needs-taskfile-task").length,
+            ambiguous: publicEntries.filter((entry) => entry.status === "ambiguous").length,
+            intentionallySkipped: entries.filter((entry) => entry.status === "intentionally-skipped").length,
+            taskfileOnlyPreserved: taskfileOnlyTasks.length,
+        },
+        entries,
+        taskfileOnlyTasks,
     };
-    const stage = stageByCommand[commandName] || "guided";
+}
+function buildCleatPrompt(commandName, state, artifacts) {
+    const stage = "sync";
     const priorStages = Object.keys(state.artifacts);
+    const makefilePath = artifacts?.scanArtifact?.data?.makefile?.path || null;
     const proposedSurface = artifacts?.proposedSurfaceArtifact?.data?.proposedSurface
         || artifacts?.mappingArtifact?.data?.mapping?.proposedSurface
         || null;
@@ -674,6 +716,13 @@ function buildCleatPrompt(commandName, state, artifacts) {
     const confidenceLine = confidence
         ? `Migration confidence: ${confidence.level} (${confidence.score}).`
         : "Migration confidence: unavailable.";
+    const coverage = artifacts?.syncCoverageArtifact?.data?.coverage || null;
+    const coverageLine = coverage
+        ? `Sync mode: ${coverage.mode}. Makefile coverage summary: ${coverage.summary.covered}/${coverage.summary.publicMakeTargets} covered, ${coverage.summary.needsTaskfileTask} need Taskfile tasks, ${coverage.summary.ambiguous} ambiguous, ${coverage.summary.taskfileOnlyPreserved} Taskfile-only tasks preserved.`
+        : "Sync mode: unavailable. Makefile coverage summary unavailable.";
+    const makefileStatusLine = makefilePath
+        ? `Detected Makefile: ${makefilePath}.`
+        : "No Makefile was found in this project, so there is nothing to sync from. Explain that clearly and do not invent tasks or migration work.";
     const payload = {
         command: `/${commandName}`,
         stage,
@@ -689,7 +738,12 @@ function buildCleatPrompt(commandName, state, artifacts) {
     };
     return [
         `You are executing ${payload.command}.`,
-        "Guide the user through Makefile-to-go-task migration with structured outputs.",
+        "Guide the user through Makefile-to-go-task synchronization with structured outputs.",
+        "Default flow: present a concise sync plan, then apply Taskfile-side changes unless ambiguity or destructive-risk handling blocks safe progress.",
+        "Makefile coverage source: every relevant public Makefile target must be covered, proposed, marked ambiguous, or intentionally skipped in the Taskfile sync plan.",
+        "Preserve Taskfile-only tasks. Do not delete Taskfile tasks only because they are absent from the Makefile, and do not sync Taskfile-only tasks back into the Makefile.",
+        "If no Taskfile exists, bootstrap the canonical Cleat layout from the Makefile. If a Taskfile exists, update only the Taskfile side needed to cover Makefile drift.",
+        makefileStatusLine,
         "Apply cleat house style first: canonical .yaml layout, minimal root index, root aggregates in taskfiles/_root.yaml, and normalized task naming.",
         "Canonical output shape: root Taskfile.yaml uses flatten: true and imports taskfiles/_root.yaml; namespace workflows live in taskfiles/<namespace>.yaml; helper scripts live in taskfiles/scripts/.",
         "Generated guidance uses .yaml only. Read existing Taskfile.yml files for compatibility, but recommend renaming Taskfile-related .yml files to .yaml.",
@@ -702,6 +756,7 @@ function buildCleatPrompt(commandName, state, artifacts) {
         "Preferred normalization examples: db:migrate, db:load, verify:lint, test, verify:all.",
         questionPolicyLine,
         confidenceLine,
+        coverageLine,
         "Emit artifacts using the provided schema fields (stage, timestamp, sourceCommand, data).",
         "Use policy rules to justify recommendations (structure, safety, uncertainty).",
         `Current stage: ${payload.stage}.`,
@@ -717,6 +772,8 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
     const taskfileRelatedFiles = collectTaskfileRelatedFiles(worktree);
     const taskfileRenameSuggestions = buildLegacyTaskfileRenameSuggestions(taskfileRelatedFiles);
     const classifications = makefileData.targets.map((target) => classifyMakeTarget(target));
+    const taskfileTaskNames = collectTaskfileTaskNames(worktree);
+    const syncCoverage = buildMakefileCoverage(classifications, taskfileTaskNames, context.hasTaskfile);
     const mapping = buildMappingFromClassifications(classifications);
     const scanArtifact = makeArtifact("scan", `/${commandName}`, {
         context,
@@ -744,41 +801,23 @@ function buildCleatArtifactsForCommand(commandName, worktree, state) {
     const migrationPolicyArtifact = makeArtifact("migration-policy", `/${commandName}`, {
         migrationPolicy: buildMigrationPolicy(),
     });
+    const syncCoverageArtifact = makeArtifact("sync-coverage", `/${commandName}`, {
+        coverage: syncCoverage,
+    });
     const planArtifact = makeArtifact("plan", `/${commandName}`, {
         plan: buildPlanFromArtifacts(scanArtifact, mappingArtifact),
     });
-    const artifactsByCommand = {
-        "cleat-scan-makefile": { scanArtifact, migrationPolicyArtifact },
-        "cleat-map-make-targets": {
-            scanArtifact: state.artifacts.scanArtifact || scanArtifact,
-            classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
-            mappingArtifact,
-            proposedSurfaceArtifact,
-            migrationPolicyArtifact,
-        },
-        "cleat-plan-taskfile": {
-            scanArtifact: state.artifacts.scanArtifact || scanArtifact,
-            mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
-            proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
-            migrationPolicyArtifact: state.artifacts.migrationPolicyArtifact || migrationPolicyArtifact,
-            planArtifact,
-        },
-        "cleat-shore-up-taskfile": {
-            classificationArtifact,
-            mappingArtifact,
-            proposedSurfaceArtifact,
-            migrationPolicyArtifact,
-        },
-        "cleat-migrate-makefile": {
-            scanArtifact: state.artifacts.scanArtifact || scanArtifact,
-            classificationArtifact: state.artifacts.classificationArtifact || classificationArtifact,
-            mappingArtifact: state.artifacts.mappingArtifact || mappingArtifact,
-            proposedSurfaceArtifact: state.artifacts.proposedSurfaceArtifact || proposedSurfaceArtifact,
-            migrationPolicyArtifact: state.artifacts.migrationPolicyArtifact || migrationPolicyArtifact,
-            planArtifact,
-        },
+    if (commandName !== CLEAT_SYNC_COMMAND)
+        return { scanArtifact };
+    return {
+        scanArtifact,
+        classificationArtifact,
+        mappingArtifact,
+        proposedSurfaceArtifact,
+        migrationPolicyArtifact,
+        syncCoverageArtifact,
+        planArtifact,
     };
-    return artifactsByCommand[commandName] || { scanArtifact };
 }
 function buildStartupRoutingGuidance() {
     const text = "Use go-task tools for task workflows. Prefer exact-match execution first: if the user gives a specific task name, run task_run directly (for example: task_run task=\"verify:all\"). Use task_help when the task name is close/uncertain, task_recommend when intent is known but task name is unknown, and task_list only for broad discovery. Avoid raw shell task commands; use task tools so safety/help/progress behavior is preserved.";
@@ -1862,6 +1901,8 @@ export const __cleatInternals = {
     buildProposedSurface,
     buildMappingFromClassifications,
     buildPlanFromArtifacts,
+    collectTaskfileTaskNames,
+    buildMakefileCoverage,
     buildPolicyScore,
     buildCleatPrompt,
     buildCleatArtifactsForCommand,

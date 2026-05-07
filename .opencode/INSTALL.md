@@ -39,12 +39,12 @@ opencode debug config
 Confirm:
 
 - the cleat plugin ref is present in `plugin`
-- commands include `cleat-scan-makefile`, `cleat-plan-taskfile`, and related cleat commands
+- commands include `cleat-sync-from-makefile`
 
 You can also run a command directly:
 
 ```bash
-opencode run --command "cleat-scan-makefile" "smoke"
+opencode run --command "cleat-sync-from-makefile" "smoke"
 ```
 
 ## Troubleshooting

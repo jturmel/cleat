@@ -18,8 +18,14 @@ function readFixture(name) {
 }
 
 function testParseSlashCommand() {
-  assert.equal(__cleatInternals.parseSlashCommand("/cleat-migrate-makefile"), "cleat-migrate-makefile")
-  assert.equal(__cleatInternals.parseSlashCommand("cleat-scan-makefile"), "cleat-scan-makefile")
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-sync-from-makefile"), "cleat-sync-from-makefile")
+  assert.equal(__cleatInternals.parseSlashCommand("cleat-sync-from-makefile"), "cleat-sync-from-makefile")
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-sync-from-makefile include docker cleanup"), "cleat-sync-from-makefile")
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-migrate-makefile"), null)
+  assert.equal(__cleatInternals.parseSlashCommand("cleat-scan-makefile"), null)
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-map-make-targets"), null)
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-plan-taskfile"), null)
+  assert.equal(__cleatInternals.parseSlashCommand("/cleat-shore-up-taskfile"), null)
   assert.equal(__cleatInternals.parseSlashCommand("/not-a-cleat-command"), null)
 }
 
@@ -232,7 +238,7 @@ gcp-deploy:
 `, "utf8")
 
     const state = { artifacts: {} }
-    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-migrate-makefile", tempRoot, state)
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-sync-from-makefile", tempRoot, state)
     const proposed = artifacts?.proposedSurfaceArtifact?.data?.proposedSurface
 
     assert.notEqual(proposed, null)
@@ -258,13 +264,100 @@ clean:
 `, "utf8")
 
     const state = { artifacts: {} }
-    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-migrate-makefile", tempRoot, state)
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-sync-from-makefile", tempRoot, state)
     const policy = artifacts?.migrationPolicyArtifact?.data?.migrationPolicy
 
     assert.notEqual(policy, null)
     assert.equal(policy.canonicalLayout.rootTaskfile, "Taskfile.yaml")
     assert.equal(policy.cleanPolicy.composeMayRemove.includes("volumes"), true)
     assert.equal(policy.safetyPromptPolicy.preferredMechanism, "go-task prompt:")
+    assert.notEqual(artifacts?.syncCoverageArtifact, null)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testSyncCoverageArtifactPreservesTaskfileOnlyTasks() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-sync-coverage-"))
+
+  try {
+    writeFileSync(
+      join(tempRoot, "Makefile"),
+      [
+        ".PHONY: test lint custom-target",
+        "test:",
+        "\tnpm test",
+        "lint:",
+        "\tnpm run lint",
+        "custom-target:",
+        "\t./scripts/custom.sh",
+        "",
+      ].join("\n"),
+      "utf8",
+    )
+    writeFileSync(
+      join(tempRoot, "Taskfile.yaml"),
+      [
+        'version: "3"',
+        "tasks:",
+        "  test:",
+        "    desc: Run tests",
+        "    cmds:",
+        "      - npm test",
+        "  docs:build:",
+        "    desc: Build docs",
+        "    cmds:",
+        "      - npm run docs:build",
+        "",
+      ].join("\n"),
+      "utf8",
+    )
+
+    const state = { artifacts: {} }
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-sync-from-makefile", tempRoot, state)
+    const coverage = artifacts.syncCoverageArtifact.data.coverage
+
+    assert.equal(coverage.mode, "update")
+    assert.equal(coverage.summary.publicMakeTargets, 3)
+    assert.equal(coverage.summary.covered, 1)
+    assert.equal(coverage.summary.needsTaskfileTask, 1)
+    assert.equal(coverage.summary.ambiguous, 1)
+    assert.equal(coverage.summary.taskfileOnlyPreserved, 1)
+    assert.equal(coverage.entries.find((entry) => entry.makeTarget === "test")?.status, "covered")
+    assert.equal(coverage.entries.find((entry) => entry.makeTarget === "lint")?.status, "needs-taskfile-task")
+    assert.equal(coverage.entries.find((entry) => entry.makeTarget === "custom-target")?.status, "ambiguous")
+    assert.deepEqual(coverage.taskfileOnlyTasks, ["docs:build"])
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testSyncCoverageArtifactBootstrapMode() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-sync-bootstrap-"))
+
+  try {
+    writeFileSync(
+      join(tempRoot, "Makefile"),
+      [
+        ".PHONY: build test",
+        "build:",
+        "\tnpm run build",
+        "test:",
+        "\tnpm test",
+        "",
+      ].join("\n"),
+      "utf8",
+    )
+
+    const state = { artifacts: {} }
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-sync-from-makefile", tempRoot, state)
+    const coverage = artifacts.syncCoverageArtifact.data.coverage
+
+    assert.equal(coverage.mode, "bootstrap")
+    assert.equal(coverage.summary.publicMakeTargets, 2)
+    assert.equal(coverage.summary.covered, 0)
+    assert.equal(coverage.summary.needsTaskfileTask, 2)
+    assert.deepEqual(coverage.taskfileOnlyTasks, [])
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -272,17 +365,37 @@ clean:
 
 function testPromptQuestionPolicyUsesConfidence() {
   const lowPrompt = __cleatInternals.buildCleatPrompt(
-    "cleat-migrate-makefile",
+    "cleat-sync-from-makefile",
     { artifacts: {} },
     {
       proposedSurfaceArtifact: {
         stage: "proposed-surface",
         timestamp: new Date().toISOString(),
-        sourceCommand: "/cleat-migrate-makefile",
+        sourceCommand: "/cleat-sync-from-makefile",
         data: {
           proposedSurface: {
             ambiguities: ["custom-target"],
             confidence: { score: 0.41, level: "low", askQuestions: true },
+          },
+        },
+      },
+      syncCoverageArtifact: {
+        stage: "sync-coverage",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-sync-from-makefile",
+        data: {
+          coverage: {
+            mode: "update",
+            summary: {
+              publicMakeTargets: 1,
+              covered: 0,
+              needsTaskfileTask: 0,
+              ambiguous: 1,
+              intentionallySkipped: 0,
+              taskfileOnlyPreserved: 0,
+            },
+            entries: [],
+            taskfileOnlyTasks: [],
           },
         },
       },
@@ -291,19 +404,41 @@ function testPromptQuestionPolicyUsesConfidence() {
 
   assert.equal(lowPrompt.includes("Question policy: ask one focused question only for unresolved ambiguities"), true)
   assert.equal(lowPrompt.includes("Migration confidence: low (0.41)."), true)
+  assert.equal(lowPrompt.includes("Default flow: present a concise sync plan, then apply Taskfile-side changes"), true)
+  assert.equal(lowPrompt.includes("Makefile coverage source"), true)
 
   const highPrompt = __cleatInternals.buildCleatPrompt(
-    "cleat-migrate-makefile",
+    "cleat-sync-from-makefile",
     { artifacts: {} },
     {
       proposedSurfaceArtifact: {
         stage: "proposed-surface",
         timestamp: new Date().toISOString(),
-        sourceCommand: "/cleat-migrate-makefile",
+        sourceCommand: "/cleat-sync-from-makefile",
         data: {
           proposedSurface: {
             ambiguities: [],
             confidence: { score: 0.91, level: "high", askQuestions: false },
+          },
+        },
+      },
+      syncCoverageArtifact: {
+        stage: "sync-coverage",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-sync-from-makefile",
+        data: {
+          coverage: {
+            mode: "bootstrap",
+            summary: {
+              publicMakeTargets: 2,
+              covered: 0,
+              needsTaskfileTask: 2,
+              ambiguous: 0,
+              intentionallySkipped: 0,
+              taskfileOnlyPreserved: 0,
+            },
+            entries: [],
+            taskfileOnlyTasks: [],
           },
         },
       },
@@ -312,6 +447,7 @@ function testPromptQuestionPolicyUsesConfidence() {
 
   assert.equal(highPrompt.includes("Question policy: do not ask structural preference questions"), true)
   assert.equal(highPrompt.includes("Migration confidence: high (0.91)."), true)
+  assert.equal(highPrompt.includes("Sync mode: bootstrap."), true)
 }
 
 function testPlanArtifactUsesCanonicalYamlGuidance() {
@@ -354,17 +490,37 @@ function testPlanArtifactUsesCanonicalYamlGuidance() {
 
 function testPromptContainsCanonicalYamlGuidance() {
   const prompt = __cleatInternals.buildCleatPrompt(
-    "cleat-migrate-makefile",
+    "cleat-sync-from-makefile",
     { artifacts: {} },
     {
       proposedSurfaceArtifact: {
         stage: "proposed-surface",
         timestamp: new Date().toISOString(),
-        sourceCommand: "/cleat-migrate-makefile",
+        sourceCommand: "/cleat-sync-from-makefile",
         data: {
           proposedSurface: {
             ambiguities: [],
             confidence: { score: 0.91, level: "high", askQuestions: false },
+          },
+        },
+      },
+      syncCoverageArtifact: {
+        stage: "sync-coverage",
+        timestamp: new Date().toISOString(),
+        sourceCommand: "/cleat-sync-from-makefile",
+        data: {
+          coverage: {
+            mode: "update",
+            summary: {
+              publicMakeTargets: 3,
+              covered: 1,
+              needsTaskfileTask: 1,
+              ambiguous: 1,
+              intentionallySkipped: 0,
+              taskfileOnlyPreserved: 1,
+            },
+            entries: [],
+            taskfileOnlyTasks: ["docs:build"],
           },
         },
       },
@@ -384,6 +540,23 @@ function testPromptContainsCanonicalYamlGuidance() {
   assert.equal(prompt.includes("act:*"), false)
   assert.equal(prompt.includes("sfdc:*"), false)
   assert.equal(prompt.includes("native:*"), false)
+}
+
+function testPromptExplicitlyHandlesMissingMakefile() {
+  const artifacts = __cleatInternals.buildCleatArtifactsForCommand(
+    "cleat-sync-from-makefile",
+    repoRoot,
+    { artifacts: {} },
+  )
+
+  const prompt = __cleatInternals.buildCleatPrompt(
+    "cleat-sync-from-makefile",
+    { artifacts: {} },
+    artifacts,
+  )
+
+  assert.equal(prompt.includes("No Makefile was found"), true)
+  assert.equal(prompt.includes("there is nothing to sync from"), true)
 }
 
 function testMigrationPolicyUsesCanonicalYamlLayout() {
@@ -537,6 +710,22 @@ tasks:
   }
 }
 
+function testCollectTaskfileTaskNamesHandlesTaskfileWithoutTasks() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-no-tasks-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Taskfile.yaml"), `version: "3"
+includes:
+  api: ./taskfiles/api.yaml
+`, "utf8")
+
+    const taskNames = __cleatInternals.collectTaskfileTaskNames(tempRoot)
+    assert.deepEqual(taskNames, [])
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
 function testScanArtifactIncludesLegacyYmlRenameSuggestions() {
   const tempRoot = mkdtempSync(join(tmpdir(), "cleat-scan-legacy-yml-"))
 
@@ -559,7 +748,7 @@ tasks:
 `, "utf8")
 
     const state = { artifacts: {} }
-    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-scan-makefile", tempRoot, state)
+    const artifacts = __cleatInternals.buildCleatArtifactsForCommand("cleat-sync-from-makefile", tempRoot, state)
     const scanData = artifacts?.scanArtifact?.data
 
     assert.equal(Array.isArray(scanData?.taskfileInventory?.renameSuggestions), true)
@@ -619,8 +808,10 @@ async function testCleatCommandsAreRegistered() {
   const config: any = {}
   await (hooks as any).config?.(config)
 
-  assert.equal(typeof config.command?.["cleat-scan-makefile"]?.description, "string")
-  assert.equal(typeof config.command?.["cleat-plan-taskfile"]?.template, "string")
+  const cleatCommandNames = Object.keys(config.command || {}).filter((name) => name.startsWith("cleat-"))
+  assert.deepEqual(cleatCommandNames, ["cleat-sync-from-makefile"])
+  assert.equal(typeof config.command?.["cleat-sync-from-makefile"]?.description, "string")
+  assert.equal(typeof config.command?.["cleat-sync-from-makefile"]?.template, "string")
 }
 
 function testPackageRootImportAfterInstall() {
@@ -706,15 +897,19 @@ async function run() {
   testScoreMigrationConfidenceNoPublicTargets()
   testProposedSurfaceConfidenceAndArtifact()
   testMigrationCommandsIncludePolicyArtifact()
+  testSyncCoverageArtifactPreservesTaskfileOnlyTasks()
+  testSyncCoverageArtifactBootstrapMode()
   testPromptQuestionPolicyUsesConfidence()
   testPlanArtifactUsesCanonicalYamlGuidance()
   testPromptContainsCanonicalYamlGuidance()
+  testPromptExplicitlyHandlesMissingMakefile()
   testMigrationPolicyUsesCanonicalYamlLayout()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testTaskfileLoadingWithMissingInclude()
   testTaskfilePrefersYamlWhenBothExist()
   testTaskfileLoadingIncludeExtensionFallback()
+  testCollectTaskfileTaskNamesHandlesTaskfileWithoutTasks()
   testScanArtifactIncludesLegacyYmlRenameSuggestions()
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()

@@ -22,8 +22,20 @@ When updating, move to the next release tag rather than tracking `main`.
 
 - exposes task-focused tools for listing, explaining, recommending, and running go-task tasks
 - parses `Taskfile.yaml`/`Taskfile.yml` and included taskfiles to build task metadata
-- helps guide Makefile-to-go-task migration workflows
+- offers `/cleat-sync-from-makefile` to bootstrap or update Taskfile coverage from Makefile workflows
 - provides task-aware startup guidance without loading external skill packs
+
+## Makefile sync command
+
+Use `/cleat-sync-from-makefile` when a project has a Makefile and needs go-task coverage.
+
+The command handles both initial setup and incremental updates:
+
+- if no Taskfile exists, it bootstraps the canonical Cleat Taskfile layout from Makefile targets
+- if a Taskfile exists, it preserves Taskfile-only tasks and syncs missing Makefile target coverage into the Taskfile setup
+- it presents a concise sync plan, then applies Taskfile-side changes unless ambiguity or destructive-risk handling needs one focused question
+
+The Makefile is treated as a required coverage source, not the exclusive source of truth. Extra Taskfile tasks are allowed and are not synced back to the Makefile.
 
 ## Opinionated migration guidance
 

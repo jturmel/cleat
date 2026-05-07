@@ -33,9 +33,6 @@ coverage.html
 /.act/
 
 # TypeScript build outputs
-/.opencode/plugins/cleat-plugin.js
 /.opencode/plugins/cleat-plugin.test.js
-/.opencode/plugins/module-exec.js
-/.opencode/plugins/cleat-entry.js
-/tasks.js
 /tests/cleat-plugin.test.js
+/.opencode/plugins/module-exec.js

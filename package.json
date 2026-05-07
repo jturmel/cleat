@@ -1,12 +1,13 @@
 {
   "name": "cleat",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "private": true,
   "main": "./.opencode/plugins/cleat-entry.js",
   "type": "module",
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "npm run build && node tests/cleat-plugin.test.js",
+    "test:opencode-install": "bash scripts/verify-opencode-git-install.sh",
     "test:workflow": "./scripts/run-ci-local.sh",
     "build": "tsc",
     "install:act": "mkdir -p tools/act/bin && GOBIN=\"$PWD/tools/act/bin\" go install github.com/nektos/act@v0.2.87",

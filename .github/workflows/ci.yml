@@ -26,17 +26,5 @@ jobs:
       - name: Run plugin tests
         run: npm test
 
-      - name: Verify git dependency install
-        run: |
-          consumer_dir="$(mktemp -d)"
-          install_spec="git+file://$GITHUB_WORKSPACE"
-          if [ "${ACT:-}" = "true" ]; then
-            # act runs can miss full worktree git metadata; use plain file install locally.
-            install_spec="file:$GITHUB_WORKSPACE"
-          fi
-          (
-            cd "$consumer_dir"
-            npm init -y
-            npm install "$install_spec"
-            node --input-type=module -e "import('cleat').then(() => process.stdout.write('install import: PASS\n'))"
-          )
+      - name: Verify OpenCode git dependency install
+        run: npm run test:opencode-install

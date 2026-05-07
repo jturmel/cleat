@@ -11,7 +11,7 @@ Add cleat to the `plugin` array in your `opencode.json`:
 ```json
 {
   "plugin": [
-    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
+    "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4"
   ]
 }
 ```
@@ -20,10 +20,10 @@ Then restart OpenCode.
 
 ## Update to a new release
 
-When a new release is published (for example `v0.4.2`), update the plugin ref and reinstall:
+When a new release is published (for example `v0.4.4`), update the plugin ref and reinstall:
 
 ```bash
-opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2" --global --force
+opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4" --global --force
 ```
 
 Using pinned tags gives deterministic installs and avoids ambiguity from floating branch refs.
@@ -61,10 +61,27 @@ readlink -f ~/.cache/opencode/node_modules/cleat
 
 ```bash
 cd ~/.cache/opencode
-npm install --force "cleat@git+https://github.com/jturmel/cleat.git#v0.4.2"
+npm install --force "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4"
 ```
 
 3. Restart OpenCode and re-check `opencode debug config`.
+
+### OpenCode reports `git dep preparation failed`
+
+This means OpenCode could not prepare or load the git plugin package from its package cache. Cleat release `v0.4.4` and newer include the runtime JavaScript files required by OpenCode/Bun installs, so OpenCode does not need to run package lifecycle scripts to create `.opencode/plugins/cleat-entry.js`.
+
+Refresh the plugin cache and restart OpenCode:
+
+```bash
+opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4" --global --force
+```
+
+If the error persists, remove the stale Cleat cache entry and reinstall the pinned tag:
+
+```bash
+rm -rf ~/.cache/opencode/packages/cleat@git+https:
+opencode plugin "cleat@git+https://github.com/jturmel/cleat.git#v0.4.4" --global --force
+```
 
 ### Need a temporary hotfix pin
 

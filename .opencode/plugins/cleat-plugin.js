@@ -636,7 +636,7 @@ function collectTaskfileTaskNames(worktree) {
     const parsed = loadTaskfile(worktree);
     if (!parsed)
         return [];
-    return Object.keys(parsed.tasks).filter((name) => !parsed.tasks[name]?.internal).sort();
+    return Object.keys(parsed?.tasks || {}).filter((name) => !parsed.tasks[name]?.internal).sort();
 }
 function buildMakefileCoverage(classifications, taskfileTaskNames, hasTaskfile) {
     const taskfileTaskSet = new Set(taskfileTaskNames);
@@ -704,6 +704,7 @@ function buildMakefileCoverage(classifications, taskfileTaskNames, hasTaskfile) 
 function buildCleatPrompt(commandName, state, artifacts) {
     const stage = "sync";
     const priorStages = Object.keys(state.artifacts);
+    const makefilePath = artifacts?.scanArtifact?.data?.makefile?.path || null;
     const proposedSurface = artifacts?.proposedSurfaceArtifact?.data?.proposedSurface
         || artifacts?.mappingArtifact?.data?.mapping?.proposedSurface
         || null;
@@ -719,6 +720,9 @@ function buildCleatPrompt(commandName, state, artifacts) {
     const coverageLine = coverage
         ? `Sync mode: ${coverage.mode}. Makefile coverage summary: ${coverage.summary.covered}/${coverage.summary.publicMakeTargets} covered, ${coverage.summary.needsTaskfileTask} need Taskfile tasks, ${coverage.summary.ambiguous} ambiguous, ${coverage.summary.taskfileOnlyPreserved} Taskfile-only tasks preserved.`
         : "Sync mode: unavailable. Makefile coverage summary unavailable.";
+    const makefileStatusLine = makefilePath
+        ? `Detected Makefile: ${makefilePath}.`
+        : "No Makefile was found in this project, so there is nothing to sync from. Explain that clearly and do not invent tasks or migration work.";
     const payload = {
         command: `/${commandName}`,
         stage,
@@ -739,6 +743,7 @@ function buildCleatPrompt(commandName, state, artifacts) {
         "Makefile coverage source: every relevant public Makefile target must be covered, proposed, marked ambiguous, or intentionally skipped in the Taskfile sync plan.",
         "Preserve Taskfile-only tasks. Do not delete Taskfile tasks only because they are absent from the Makefile, and do not sync Taskfile-only tasks back into the Makefile.",
         "If no Taskfile exists, bootstrap the canonical Cleat layout from the Makefile. If a Taskfile exists, update only the Taskfile side needed to cover Makefile drift.",
+        makefileStatusLine,
         "Apply cleat house style first: canonical .yaml layout, minimal root index, root aggregates in taskfiles/_root.yaml, and normalized task naming.",
         "Canonical output shape: root Taskfile.yaml uses flatten: true and imports taskfiles/_root.yaml; namespace workflows live in taskfiles/<namespace>.yaml; helper scripts live in taskfiles/scripts/.",
         "Generated guidance uses .yaml only. Read existing Taskfile.yml files for compatibility, but recommend renaming Taskfile-related .yml files to .yaml.",

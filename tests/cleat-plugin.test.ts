@@ -542,6 +542,23 @@ function testPromptContainsCanonicalYamlGuidance() {
   assert.equal(prompt.includes("native:*"), false)
 }
 
+function testPromptExplicitlyHandlesMissingMakefile() {
+  const artifacts = __cleatInternals.buildCleatArtifactsForCommand(
+    "cleat-sync-from-makefile",
+    repoRoot,
+    { artifacts: {} },
+  )
+
+  const prompt = __cleatInternals.buildCleatPrompt(
+    "cleat-sync-from-makefile",
+    { artifacts: {} },
+    artifacts,
+  )
+
+  assert.equal(prompt.includes("No Makefile was found"), true)
+  assert.equal(prompt.includes("there is nothing to sync from"), true)
+}
+
 function testMigrationPolicyUsesCanonicalYamlLayout() {
   const policy = __cleatInternals.buildMigrationPolicy()
 
@@ -688,6 +705,22 @@ tasks:
     assert.notEqual(parsed, null)
     assert.equal(parsed?.tasks["api:test"]?.name, "api:test")
     assert.equal(parsed?.tasks["api:test"]?.desc, "Run API tests")
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+function testCollectTaskfileTaskNamesHandlesTaskfileWithoutTasks() {
+  const tempRoot = mkdtempSync(join(tmpdir(), "cleat-taskfile-no-tasks-"))
+
+  try {
+    writeFileSync(join(tempRoot, "Taskfile.yaml"), `version: "3"
+includes:
+  api: ./taskfiles/api.yaml
+`, "utf8")
+
+    const taskNames = __cleatInternals.collectTaskfileTaskNames(tempRoot)
+    assert.deepEqual(taskNames, [])
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -869,12 +902,14 @@ async function run() {
   testPromptQuestionPolicyUsesConfidence()
   testPlanArtifactUsesCanonicalYamlGuidance()
   testPromptContainsCanonicalYamlGuidance()
+  testPromptExplicitlyHandlesMissingMakefile()
   testMigrationPolicyUsesCanonicalYamlLayout()
   testTaskfileParsingModule()
   testTaskfileLoadingModule()
   testTaskfileLoadingWithMissingInclude()
   testTaskfilePrefersYamlWhenBothExist()
   testTaskfileLoadingIncludeExtensionFallback()
+  testCollectTaskfileTaskNamesHandlesTaskfileWithoutTasks()
   testScanArtifactIncludesLegacyYmlRenameSuggestions()
   testHasSeparateTaskSummary()
   testNoAlwaysLoadedSkills()
